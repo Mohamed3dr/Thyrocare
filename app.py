@@ -1,5 +1,9 @@
+import hashlib
+import hmac
 import io
 import os
+import re
+import secrets as pysecrets
 from datetime import datetime, timedelta
 
 import cv2
@@ -7,6 +11,7 @@ import librosa
 import mediapipe as mp
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 from streamlit_webrtc import VideoProcessorBase, webrtc_streamer
 
@@ -60,6 +65,15 @@ FEATURES_BY_TEST = {
     },
 }
 
+NECK_FEATURES = {
+    "Flexion": "Neck flexion (°)",
+    "Extension": "Neck extension (°)",
+    "Right_Rotation": "Right rotation (°)",
+    "Left_Rotation": "Left rotation (°)",
+    "Tilt_Right": "Tilt right (°)",
+    "Tilt_Left": "Tilt left (°)",
+}
+
 # 3D reference face model (image-style axes: x right, y down, z away from camera).
 # Generic model: nose tip, chin, eye outer corners, mouth corners.
 MODEL_POINTS = np.array(
@@ -74,7 +88,7 @@ MODEL_POINTS = np.array(
     dtype=np.float64,
 )
 LANDMARK_IDS = [1, 152, 33, 263, 61, 291]
-PROC_W, PROC_H = 480, 360  # resolution used for face analysis
+PROC_W, PROC_H = 400, 300  # resolution used for face analysis
 
 
 # =========================================================
@@ -202,7 +216,9 @@ class NeckMovementProcessor(VideoProcessorBase):
     # ---- frame loop -------------------------------------------------------
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
-        self._analyze(image)  # measurements always use the unflipped image
+        self._tick = getattr(self, "_tick", 0) + 1
+        if self._tick % 2 == 0:  # analyse every 2nd frame to keep the server fast
+            self._analyze(image)  # measurements always use the unflipped image
         return frame
 
     def _analyze(self, image):
@@ -303,7 +319,74 @@ class NeckMovementProcessor(VideoProcessorBase):
 # =========================================================
 # HELPERS: STORAGE
 # =========================================================
+KIND = {VOICE_FILE: "voice", NECK_FILE: "neck"}
+PATIENTS_FILE = "patients_local.csv"
+NON_NUMERIC = ("Patient_ID", "Date", "Test_Type")
+
+
+def _supabase_cfg():
+    """(url, key) if a [supabase] secret is configured, else None (local CSV fallback)."""
+    try:
+        cfg = dict(st.secrets["supabase"])
+        if cfg.get("url") and cfg.get("key"):
+            return cfg["url"].rstrip("/"), cfg["key"]
+    except Exception:
+        pass
+    return None
+
+
+def _headers(key, extra=None):
+    h = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if extra:
+        h.update(extra)
+    return h
+
+
+def _clean(v):
+    if isinstance(v, (float, np.floating)):
+        return None if pd.isna(v) else float(v)
+    if isinstance(v, np.integer):
+        return int(v)
+    return v
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_remote(url, key, kind, patient_id):
+    r = requests.get(
+        f"{url}/rest/v1/records",
+        headers=_headers(key),
+        params={
+            "patient_id": f"eq.{patient_id}",
+            "kind": f"eq.{kind}",
+            "select": "data",
+            "order": "date.asc",
+            "limit": "5000",
+        },
+        timeout=15,
+    )
+    r.raise_for_status()
+    return [x["data"] for x in r.json()]
+
+
 def save_row(path, row):
+    cfg = _supabase_cfg()
+    if cfg:
+        url, key = cfg
+        body = {
+            "patient_id": str(row["Patient_ID"]),
+            "kind": KIND[path],
+            "date": str(row["Date"]),
+            "data": {k: _clean(v) for k, v in row.items()},
+        }
+        r = requests.post(
+            f"{url}/rest/v1/records",
+            headers=_headers(key, {"Prefer": "return=minimal"}),
+            json=body,
+            timeout=15,
+        )
+        r.raise_for_status()
+        _fetch_remote.clear()
+        return
     df = pd.DataFrame([row])
     if os.path.exists(path):
         df = pd.concat([pd.read_csv(path), df], ignore_index=True)
@@ -311,15 +394,29 @@ def save_row(path, row):
 
 
 def load_history(path, patient_id):
-    if not os.path.exists(path):
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(path)
-    except Exception:
-        return pd.DataFrame()
-    if "Patient_ID" not in df.columns:
-        return pd.DataFrame()
-    df = df[df["Patient_ID"].astype(str) == str(patient_id)].copy()
+    cfg = _supabase_cfg()
+    if cfg:
+        try:
+            rows = _fetch_remote(cfg[0], cfg[1], KIND[path], str(patient_id))
+        except Exception as error:
+            st.session_state["storage_error"] = str(error)
+            return pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows)
+        for c in df.columns:
+            if c not in NON_NUMERIC:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+    else:
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            return pd.DataFrame()
+        if "Patient_ID" not in df.columns:
+            return pd.DataFrame()
+        df = df[df["Patient_ID"].astype(str) == str(patient_id)].copy()
     if df.empty:
         return df
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -327,12 +424,92 @@ def load_history(path, patient_id):
 
 
 def delete_patient_rows(path, patient_id):
+    cfg = _supabase_cfg()
+    if cfg:
+        url, key = cfg
+        r = requests.delete(
+            f"{url}/rest/v1/records",
+            headers=_headers(key),
+            params={"patient_id": f"eq.{patient_id}", "kind": f"eq.{KIND[path]}"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        _fetch_remote.clear()
+        return
     if not os.path.exists(path):
         return
     df = pd.read_csv(path)
     if "Patient_ID" in df.columns:
         df = df[df["Patient_ID"].astype(str) != str(patient_id)]
         df.to_csv(path, index=False)
+
+
+# ---------------------------------------------------------------- accounts (ID + PIN)
+def hash_pin(pin, salt_hex):
+    return hashlib.pbkdf2_hmac("sha256", pin.encode(), bytes.fromhex(salt_hex), 150_000).hex()
+
+
+def get_patient(pid):
+    cfg = _supabase_cfg()
+    if cfg:
+        url, key = cfg
+        r = requests.get(
+            f"{url}/rest/v1/patients",
+            headers=_headers(key),
+            params={"patient_id": f"eq.{pid}", "select": "salt,pin_hash"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0] if rows else None
+    if not os.path.exists(PATIENTS_FILE):
+        return None
+    df = pd.read_csv(PATIENTS_FILE, dtype=str)
+    hit = df[df["patient_id"] == pid]
+    return None if hit.empty else hit.iloc[0].to_dict()
+
+
+def create_patient(pid, pin):
+    salt = pysecrets.token_hex(16)
+    record = {"patient_id": pid, "salt": salt, "pin_hash": hash_pin(pin, salt)}
+    cfg = _supabase_cfg()
+    if cfg:
+        url, key = cfg
+        r = requests.post(
+            f"{url}/rest/v1/patients",
+            headers=_headers(key, {"Prefer": "return=minimal"}),
+            json=record,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return
+    df = pd.DataFrame([record])
+    if os.path.exists(PATIENTS_FILE):
+        df = pd.concat([pd.read_csv(PATIENTS_FILE, dtype=str), df], ignore_index=True)
+    df.to_csv(PATIENTS_FILE, index=False)
+
+
+def sign_in_or_create(pid, pin):
+    """Returns (ok, message). A new ID creates an account; an existing ID needs its PIN."""
+    if not re.fullmatch(r"[A-Z0-9_-]{3,30}", pid):
+        return False, "ID must be 3 to 30 characters: letters, digits, - or _."
+    if pid == "DEMO":
+        return False, "DEMO is reserved. Use the demo button instead."
+    if not re.fullmatch(r"\d{4,8}", pin):
+        return False, "PIN must be 4 to 8 digits."
+    if st.session_state.get("pin_fails", 0) >= 5:
+        return False, "Too many wrong PINs. Reload the page to try again."
+    try:
+        acct = get_patient(pid)
+        if acct is None:
+            create_patient(pid, pin)
+            return True, "New account created. Remember your ID and PIN."
+        if hmac.compare_digest(hash_pin(pin, acct["salt"]), acct["pin_hash"]):
+            return True, "Welcome back."
+    except Exception as error:
+        return False, f"Storage error: {error}"
+    st.session_state["pin_fails"] = st.session_state.get("pin_fails", 0) + 1
+    return False, "Wrong PIN for this ID."
 
 
 def load_demo_data():
@@ -533,6 +710,126 @@ def compute_findings(patient_id, use_ml=False):
     return findings, notes, ml_note
 
 
+def recovery_profile(df, features, n_base=N_BASE):
+    """Baseline / Previous / Current table (the 'Patient Recovery Profile')."""
+    rows = []
+    for col, label in features.items():
+        if col not in df.columns:
+            continue
+        s = df[col].dropna()
+        if s.empty:
+            continue
+        cur = float(s.iloc[-1])
+        prev = float(s.iloc[-2]) if len(s) >= 2 else np.nan
+        base = float(s.iloc[:n_base].mean()) if len(s) >= n_base else np.nan
+        change = (cur - base) / base * 100 if pd.notna(base) and base else np.nan
+        rows.append(
+            {
+                "Measure": label,
+                "Baseline": base,
+                "Previous": prev,
+                "Current": cur,
+                "Change vs baseline (%)": change,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def get_profiles(patient_id):
+    """Returns ({test_type: profile_df}, neck_profile_df)."""
+    voice = load_history(VOICE_FILE, patient_id)
+    neck = load_history(NECK_FILE, patient_id)
+    voice_profiles = {}
+    if not voice.empty:
+        if "Test_Type" not in voice.columns:
+            voice["Test_Type"] = TEST_TYPES[0]
+        for test, grp in voice.groupby("Test_Type"):
+            grp = grp.sort_values("Date").reset_index(drop=True)
+            prof = recovery_profile(grp, FEATURES_BY_TEST.get(test, {}), n_base=N_BASE)
+            if not prof.empty:
+                voice_profiles[test] = prof
+    neck_profile = (
+        recovery_profile(neck, NECK_FEATURES, n_base=1) if not neck.empty else pd.DataFrame()
+    )
+    return voice_profiles, neck_profile
+
+
+def show_table(df):
+    """Display a profile table with clean number formatting."""
+    shown = df.copy()
+    for c in shown.columns[1:]:
+        shown[c] = shown[c].map(lambda v: "—" if pd.isna(v) else f"{v:.2f}")
+    st.dataframe(shown, use_container_width=True, hide_index=True)
+
+
+def profile_to_markdown(df):
+    lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
+    for _, row in df.iterrows():
+        cells = [str(row.iloc[0])] + ["—" if pd.isna(v) else f"{v:.2f}" for v in row.iloc[1:]]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note):
+    out = [
+        "# VOICEGUARD AI - Patient Recovery Report",
+        f"Patient ID: {patient_id}",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "## Summary",
+    ]
+    if findings:
+        out.append("Review suggested:")
+        out += [f"- {f}" for f in findings]
+        out.append("")
+        out.append(
+            "Suggested next step: review the findings with the treating clinician and repeat "
+            "the standardized assessment under the same recording conditions."
+        )
+    else:
+        out.append("No notable change from the personal baseline was detected.")
+    for n in notes:
+        out.append(f"- Note: {n}")
+    if ml_note:
+        out.append(f"- {ml_note}")
+
+    for test, prof in voice_profiles.items():
+        out += ["", f"## Voice profile - {test}", profile_to_markdown(prof)]
+    if not neck_profile.empty:
+        out += ["", "## Neck movement profile (baseline = first assessment)", profile_to_markdown(neck_profile)]
+
+    out += [
+        "",
+        "---",
+        "Exploratory monitoring report. Not a medical diagnosis or treatment prescription. "
+        "Thresholds are demo values and have not been validated on post-thyroidectomy patients. "
+        "Camera-based neck angles are estimates, not clinical range-of-motion measurements. "
+        "Persistent hoarseness or voice change needs medical evaluation.",
+    ]
+    return "\n".join(out)
+
+
+def get_rtc_configuration():
+    """STUN servers by default. If the app has a [turn] secret, a TURN relay is added too
+    (helps the camera connect on networks that block direct connections)."""
+    servers = [
+        {"urls": ["stun:stun.l.google.com:19302"]},
+        {"urls": ["stun:stun1.l.google.com:19302"]},
+    ]
+    try:
+        turn = dict(st.secrets["turn"])
+        urls = turn.get("urls")
+        if isinstance(urls, str):
+            urls = [urls]
+        if urls and turn.get("username") and turn.get("credential"):
+            servers.append(
+                {"urls": list(urls), "username": turn["username"], "credential": turn["credential"]}
+            )
+    except Exception:
+        pass
+    return {"iceServers": servers}
+
+
 # =========================================================
 # CUSTOM DESIGN
 # =========================================================
@@ -566,7 +863,57 @@ st.title("🎙️ VOICEGUARD AI")
 st.caption("AI-Powered Post-Thyroidectomy Recovery Monitoring (exploratory prototype)")
 st.divider()
 
-patient_id = st.sidebar.text_input("Patient ID", value="P001").strip() or "P001"
+def login_sidebar():
+    """Sidebar sign-in. Returns the signed-in patient ID or None."""
+    sb = st.sidebar
+    sb.markdown("### Patient sign-in")
+    if st.session_state.get("patient_id"):
+        sb.success(f"Signed in: {st.session_state.patient_id}")
+        if sb.button("Sign out"):
+            for k in ("patient_id", "voice_result", "pitch_data", "voice_saved"):
+                st.session_state.pop(k, None)
+            st.rerun()
+    else:
+        pid_in = sb.text_input("Patient ID").strip().upper()
+        pin_in = sb.text_input("PIN (4 to 8 digits)", type="password")
+        sb.caption(
+            "First time? Choose an ID and a PIN and press the button: your account is created. "
+            "Next time, use the same ID and PIN to see your saved data. "
+            "A forgotten PIN cannot be recovered."
+        )
+        if sb.button("Sign in / Create account"):
+            ok, msg = sign_in_or_create(pid_in, pin_in)
+            if ok:
+                st.session_state.patient_id = pid_in
+                st.session_state.login_msg = msg
+                st.rerun()
+            else:
+                sb.error(msg)
+        if sb.button("Try the demo patient"):
+            try:
+                load_demo_data()
+                st.session_state.patient_id = "DEMO"
+                st.session_state.login_msg = "Demo data loaded (simulated)."
+                st.rerun()
+            except Exception as error:
+                sb.error(f"Could not load demo data: {error}")
+
+    if st.session_state.get("login_msg"):
+        sb.caption(st.session_state.pop("login_msg"))
+
+    if _supabase_cfg():
+        sb.caption("Storage: cloud database (data is kept between sessions).")
+    else:
+        sb.warning("Storage: temporary local file. Data may be erased when the app restarts.")
+    if st.session_state.get("storage_error"):
+        sb.error("Database problem: " + st.session_state["storage_error"][:150])
+    return st.session_state.get("patient_id")
+
+
+patient_id = login_sidebar()
+if not patient_id:
+    st.info("Sign in from the sidebar (or open the menu on a phone) to start.")
+    st.stop()
 
 page = st.sidebar.radio(
     "MAIN MENU",
@@ -586,9 +933,6 @@ st.sidebar.caption(
     "increasing neck swelling, or new/severe difficulty swallowing."
 )
 
-if st.sidebar.button("Load demo patient (DEMO)"):
-    load_demo_data()
-    st.sidebar.success("Demo data created. Enter Patient ID: DEMO")
 
 
 # =========================================================
@@ -718,6 +1062,11 @@ elif page == "Neck Movement":
         "Stop if you feel pain, dizziness, or tingling."
     )
 
+    st.markdown(
+        "**Movement order (about 3 seconds each, return to neutral between movements):** "
+        "1) look down, 2) look up, 3) turn right, 4) turn left, 5) tilt right, 6) tilt left."
+    )
+
     with st.expander("Direction settings (check these once by testing)"):
         swap_lr = st.checkbox("Swap left/right (use if turning RIGHT shows as LEFT)")
         swap_fe = st.checkbox("Swap flexion/extension (use if looking DOWN shows as extension)")
@@ -730,11 +1079,11 @@ elif page == "Neck Movement":
                 "facingMode": "user",
                 "width": {"ideal": 640},
                 "height": {"ideal": 480},
-                "frameRate": {"ideal": 30, "min": 15},
+                "frameRate": {"ideal": 24},
             },
             "audio": False,
         },
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        rtc_configuration=get_rtc_configuration(),
         async_processing=True,
         video_html_attrs={
             "style": {"width": "100%", "transform": "scaleX(-1)"},  # selfie (mirrored) view
@@ -814,20 +1163,23 @@ elif page == "Neck Movement":
 
         if processor.assessment_completed and not processor.assessment_active:
             if st.button("Save Neck Assessment"):
-                save_row(
-                    NECK_FILE,
-                    {
-                        "Patient_ID": patient_id,
-                        "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Flexion": processor.max_flexion,
-                        "Extension": processor.max_extension,
-                        "Right_Rotation": processor.max_right_rotation,
-                        "Left_Rotation": processor.max_left_rotation,
-                        "Tilt_Right": processor.max_tilt_right,
-                        "Tilt_Left": processor.max_tilt_left,
-                    },
-                )
-                st.success("Neck assessment saved.")
+                try:
+                    save_row(
+                        NECK_FILE,
+                        {
+                            "Patient_ID": patient_id,
+                            "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Flexion": processor.max_flexion,
+                            "Extension": processor.max_extension,
+                            "Right_Rotation": processor.max_right_rotation,
+                            "Left_Rotation": processor.max_left_rotation,
+                            "Tilt_Right": processor.max_tilt_right,
+                            "Tilt_Left": processor.max_tilt_left,
+                        },
+                    )
+                    st.success("Neck assessment saved.")
+                except Exception as error:
+                    st.error(f"Could not save assessment: {error}")
 
 
 # =========================================================
@@ -876,6 +1228,24 @@ elif page == "AI Analysis":
     if ml_note:
         st.caption(ml_note)
 
+    voice_profiles, neck_profile = get_profiles(patient_id)
+    if voice_profiles or not neck_profile.empty:
+        st.subheader("Patient Recovery Profile")
+        for test, prof in voice_profiles.items():
+            st.markdown(f"**Voice: {test}**")
+            show_table(prof)
+        if not neck_profile.empty:
+            st.markdown("**Neck movement** (baseline = first assessment)")
+            show_table(neck_profile)
+
+        report_text = build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note)
+        st.download_button(
+            "Download report (.md)",
+            data=report_text,
+            file_name=f"voiceguard_report_{patient_id}.md",
+            mime="text/markdown",
+        )
+
     st.caption(
         "Exploratory monitoring tool, not a diagnosis. Persistent hoarseness or voice change "
         "needs medical evaluation (e.g., laryngoscopy). Thresholds are demo values and have "
@@ -895,6 +1265,27 @@ elif page == "Recovery Progress":
 
     if voice.empty and neck.empty:
         st.info("No saved assessments yet for this patient.")
+
+    if not voice.empty or not neck.empty:
+        st.caption(
+            "Tip: on the free cloud server saved data can be erased when the app restarts. "
+            "Download your data to keep a copy."
+        )
+        d1, d2 = st.columns(2)
+        if not voice.empty:
+            d1.download_button(
+                "Download voice history (CSV)",
+                voice.to_csv(index=False),
+                file_name=f"voice_history_{patient_id}.csv",
+                mime="text/csv",
+            )
+        if not neck.empty:
+            d2.download_button(
+                "Download neck history (CSV)",
+                neck.to_csv(index=False),
+                file_name=f"neck_history_{patient_id}.csv",
+                mime="text/csv",
+            )
 
     if not voice.empty:
         if "Test_Type" not in voice.columns:
