@@ -8,3 +8,4 @@ praat-parselmouth
 numpy
 pandas
 scikit-learn
+requests
