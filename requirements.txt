@@ -1,0 +1,10 @@
+streamlit>=1.37
+streamlit-webrtc
+av
+opencv-python-headless
+mediapipe==0.10.14
+librosa
+praat-parselmouth
+numpy
+pandas
+scikit-learn
