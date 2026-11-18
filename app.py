@@ -339,7 +339,11 @@ def _supabase_cfg():
 
 
 def _headers(key, extra=None):
-    h = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    h = {"apikey": key, "Content-Type": "application/json"}
+    if not key.startswith("sb_"):
+        # Legacy JWT keys go in both headers. The newer sb_secret_... / sb_publishable_...
+        # keys are not JWTs and must be sent in the apikey header only.
+        h["Authorization"] = f"Bearer {key}"
     if extra:
         h.update(extra)
     return h
