@@ -101,6 +101,14 @@ def head_angles(face, w, h):
     return float(angles[0]), float(angles[1]), float(angles[2])
 
 
+def roll_from_eyes(face, w, h):
+    """Stable head-tilt (roll) in degrees from the line between the outer eye corners.
+    Positive = tilt toward the person's right shoulder (verify with the swap option)."""
+    x_r, y_r = face.landmark[33].x * w, face.landmark[33].y * h    # person's right eye
+    x_l, y_l = face.landmark[263].x * w, face.landmark[263].y * h  # person's left eye
+    return float(np.degrees(np.arctan2(y_r - y_l, x_l - x_r)))
+
+
 # =========================================================
 # NECK MOVEMENT VIDEO PROCESSOR
 # =========================================================
@@ -138,6 +146,8 @@ class NeckMovementProcessor(VideoProcessorBase):
         self.calibration_samples = []
         self.neutral = None  # (pitch, yaw, roll)
         self.is_calibrated = False
+        self.last_rel = None
+        self.skipped = 0
 
     def reset_maxima(self):
         self.max_flexion = 0.0
@@ -171,11 +181,14 @@ class NeckMovementProcessor(VideoProcessorBase):
             return frame
 
         self.face_visible = True
-        angles = head_angles(results.multi_face_landmarks[0], 320, 240)
-        if angles is None:
+        face = results.multi_face_landmarks[0]
+        pnp = head_angles(face, 320, 240)
+        if pnp is None:
             return frame
 
-        pitch, yaw, roll = angles
+        pitch, yaw, _ = pnp
+        roll = roll_from_eyes(face, 320, 240)  # more stable than the solvePnP roll
+        angles = (pitch, yaw, roll)
 
         if not self.is_calibrated:
             self.calibration_samples.append(angles)
@@ -196,6 +209,23 @@ class NeckMovementProcessor(VideoProcessorBase):
         if self.swap_left_right:
             rel_yaw = -rel_yaw
             rel_roll = -rel_roll
+
+        # Reject impossible values and one-frame glitches (e.g. a flipped pose
+        # solution that shows up as ~180 degrees), then smooth lightly.
+        rel = np.array([rel_pitch, rel_yaw, rel_roll])
+        if np.any(np.abs(rel) > 90):
+            return frame
+        if self.last_rel is not None:
+            jump = np.abs(rel - self.last_rel)
+            if np.any(jump > 30) and self.skipped < 10:
+                self.skipped += 1
+                return frame
+            if np.any(jump > 30):
+                self.last_rel = rel  # accept a real fast change after 10 frames
+            rel = 0.5 * rel + 0.5 * self.last_rel
+        self.skipped = 0
+        self.last_rel = rel
+        rel_pitch, rel_yaw, rel_roll = (float(v) for v in rel)
 
         self.current_pitch = rel_pitch
         self.current_yaw = rel_yaw
@@ -656,10 +686,16 @@ elif page == "Neck Movement":
         swap_lr = st.checkbox("Swap left/right (use if turning RIGHT shows as LEFT)")
         swap_fe = st.checkbox("Swap flexion/extension (use if looking DOWN shows as extension)")
 
+    # Mirror the on-screen preview only (measurements are unaffected).
+    st.markdown(
+        "<style>video { transform: scaleX(-1); }</style>",
+        unsafe_allow_html=True,
+    )
+
     ctx = webrtc_streamer(
         key="neck_movement",
         video_processor_factory=NeckMovementProcessor,
-        media_stream_constraints={"video": True, "audio": False},
+        media_stream_constraints={"video": {"facingMode": "user"}, "audio": False},
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
         async_processing=False,
     )
