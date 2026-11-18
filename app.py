@@ -74,6 +74,7 @@ MODEL_POINTS = np.array(
     dtype=np.float64,
 )
 LANDMARK_IDS = [1, 152, 33, 263, 61, 291]
+PROC_W, PROC_H = 480, 360  # resolution used for face analysis
 
 
 # =========================================================
@@ -107,6 +108,35 @@ def roll_from_eyes(face, w, h):
     x_r, y_r = face.landmark[33].x * w, face.landmark[33].y * h    # person's right eye
     x_l, y_l = face.landmark[263].x * w, face.landmark[263].y * h  # person's left eye
     return float(np.degrees(np.arctan2(y_r - y_l, x_l - x_r)))
+
+
+def head_rotation(face, w, h):
+    """3x3 head rotation matrix built from the 3D face mesh (columns = head x, y, z axes
+    in camera coordinates: x right, y down, z away from the camera)."""
+    def P(i):
+        lm = face.landmark[i]
+        return np.array([lm.x * w, lm.y * h, lm.z * w], dtype=np.float64)
+
+    x_raw = (P(454) - P(234)) + (P(356) - P(127))  # across the face, two cheek pairs
+    y_raw = P(152) - P(10)                          # forehead to chin
+    nx, ny = np.linalg.norm(x_raw), np.linalg.norm(y_raw)
+    if nx < 1e-6 or ny < 1e-6:
+        return None
+    x = x_raw / nx
+    z = np.cross(x, y_raw)
+    nz = np.linalg.norm(z)
+    if nz < 1e-6:
+        return None
+    z /= nz
+    y = np.cross(z, x)
+    return np.column_stack([x, y, z])
+
+
+def rot_to_pitch_yaw(rel):
+    """Pitch (+ = looking down) and yaw (+ = turning to the person's right), in degrees."""
+    yaw = np.degrees(np.arctan2(rel[0, 2], rel[2, 2]))
+    pitch = np.degrees(np.arcsin(np.clip(-rel[1, 2], -1.0, 1.0)))
+    return float(pitch), float(yaw)
 
 
 # =========================================================
@@ -144,7 +174,9 @@ class NeckMovementProcessor(VideoProcessorBase):
     # ---- state management -------------------------------------------------
     def reset_calibration(self):
         self.calibration_samples = []
-        self.neutral = None  # (pitch, yaw, roll)
+        self.neutral = None
+        self.neutral_rot = None
+        self.neutral_roll = 0.0
         self.is_calibrated = False
         self.last_rel = None
         self.skipped = 0
@@ -170,15 +202,13 @@ class NeckMovementProcessor(VideoProcessorBase):
     # ---- frame loop -------------------------------------------------------
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
-        self._tick = getattr(self, "_tick", 0) + 1
-        if self._tick % 2 == 0:  # analyse every 2nd frame to keep video smooth
-            self._analyze(image)  # measurements always use the unflipped image
+        self._analyze(image)  # measurements always use the unflipped image
         return frame
 
     def _analyze(self, image):
         self.frame_count += 1
 
-        small = cv2.resize(image, (320, 240), interpolation=cv2.INTER_AREA)
+        small = cv2.resize(image, (PROC_W, PROC_H), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb)
 
@@ -188,27 +218,27 @@ class NeckMovementProcessor(VideoProcessorBase):
 
         self.face_visible = True
         face = results.multi_face_landmarks[0]
-        pnp = head_angles(face, 320, 240)
-        if pnp is None:
+        rot = head_rotation(face, PROC_W, PROC_H)
+        if rot is None:
             return
-
-        pitch, yaw, _ = pnp
-        roll = roll_from_eyes(face, 320, 240)  # more stable than the solvePnP roll
-        angles = (pitch, yaw, roll)
+        roll = roll_from_eyes(face, PROC_W, PROC_H)
 
         if not self.is_calibrated:
-            self.calibration_samples.append(angles)
+            self.calibration_samples.append((rot, roll))
             if len(self.calibration_samples) >= self.CALIBRATION_FRAMES:
-                # Wrap-safe mean: average differences from the first sample.
-                ref = np.array(self.calibration_samples[0])
-                diffs = wrap180(np.array(self.calibration_samples) - ref)
-                self.neutral = tuple(ref + diffs.mean(axis=0))
+                mean_rot = np.mean([s[0] for s in self.calibration_samples], axis=0)
+                u, _, vt = np.linalg.svd(mean_rot)
+                if np.linalg.det(u @ vt) < 0:
+                    u[:, -1] *= -1
+                self.neutral_rot = u @ vt  # nearest true rotation to the average
+                self.neutral_roll = float(np.median([s[1] for s in self.calibration_samples]))
                 self.is_calibrated = True
             return
 
-        rel_pitch = float(wrap180(pitch - self.neutral[0]))
-        rel_yaw = float(wrap180(yaw - self.neutral[1]))
-        rel_roll = float(wrap180(roll - self.neutral[2]))
+        # Rotation relative to the person's own neutral pose (removes camera/face-shape offsets).
+        rel_rot = rot @ self.neutral_rot.T
+        rel_pitch, rel_yaw = rot_to_pitch_yaw(rel_rot)
+        rel_roll = float(wrap180(roll - self.neutral_roll))
 
         if self.swap_flex_ext:
             rel_pitch = -rel_pitch
@@ -228,7 +258,7 @@ class NeckMovementProcessor(VideoProcessorBase):
                 return
             if np.any(jump > 30):
                 self.last_rel = rel  # accept a real fast change after 10 frames
-            rel = 0.5 * rel + 0.5 * self.last_rel
+            rel = 0.6 * rel + 0.4 * self.last_rel
         self.skipped = 0
         self.last_rel = rel
         rel_pitch, rel_yaw, rel_roll = (float(v) for v in rel)
@@ -698,8 +728,8 @@ elif page == "Neck Movement":
         media_stream_constraints={
             "video": {
                 "facingMode": "user",
-                "width": {"ideal": 480},
-                "height": {"ideal": 360},
+                "width": {"ideal": 640},
+                "height": {"ideal": 480},
                 "frameRate": {"ideal": 30, "min": 15},
             },
             "audio": False,
