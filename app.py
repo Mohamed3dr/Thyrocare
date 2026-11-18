@@ -2,6 +2,7 @@ import io
 import os
 from datetime import datetime, timedelta
 
+import av
 import cv2
 import librosa
 import mediapipe as mp
@@ -122,6 +123,7 @@ class NeckMovementProcessor(VideoProcessorBase):
         # UI-controlled sign options (set from the main Streamlit thread)
         self.swap_left_right = False
         self.swap_flex_ext = False
+        self.mirror_preview = False
 
         self.reset_calibration()
         self.reset_maxima()
@@ -169,8 +171,14 @@ class NeckMovementProcessor(VideoProcessorBase):
 
     # ---- frame loop -------------------------------------------------------
     def recv(self, frame):
-        self.frame_count += 1
         image = frame.to_ndarray(format="bgr24")
+        self._analyze(image)  # measurements always use the unflipped image
+        if self.mirror_preview:
+            image = cv2.flip(image, 1)
+        return av.VideoFrame.from_ndarray(image, format="bgr24")
+
+    def _analyze(self, image):
+        self.frame_count += 1
 
         small = cv2.resize(image, (320, 240), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
@@ -178,13 +186,13 @@ class NeckMovementProcessor(VideoProcessorBase):
 
         if not results.multi_face_landmarks:
             self.face_visible = False
-            return frame
+            return
 
         self.face_visible = True
         face = results.multi_face_landmarks[0]
         pnp = head_angles(face, 320, 240)
         if pnp is None:
-            return frame
+            return
 
         pitch, yaw, _ = pnp
         roll = roll_from_eyes(face, 320, 240)  # more stable than the solvePnP roll
@@ -198,7 +206,7 @@ class NeckMovementProcessor(VideoProcessorBase):
                 diffs = wrap180(np.array(self.calibration_samples) - ref)
                 self.neutral = tuple(ref + diffs.mean(axis=0))
                 self.is_calibrated = True
-            return frame
+            return
 
         rel_pitch = float(wrap180(pitch - self.neutral[0]))
         rel_yaw = float(wrap180(yaw - self.neutral[1]))
@@ -214,12 +222,12 @@ class NeckMovementProcessor(VideoProcessorBase):
         # solution that shows up as ~180 degrees), then smooth lightly.
         rel = np.array([rel_pitch, rel_yaw, rel_roll])
         if np.any(np.abs(rel) > 90):
-            return frame
+            return
         if self.last_rel is not None:
             jump = np.abs(rel - self.last_rel)
             if np.any(jump > 30) and self.skipped < 10:
                 self.skipped += 1
-                return frame
+                return
             if np.any(jump > 30):
                 self.last_rel = rel  # accept a real fast change after 10 frames
             rel = 0.5 * rel + 0.5 * self.last_rel
@@ -254,7 +262,7 @@ class NeckMovementProcessor(VideoProcessorBase):
                     {"pitch": rel_pitch, "yaw": rel_yaw, "roll": rel_roll}
                 )
 
-        return frame
+        return
 
     def __del__(self):
         try:
@@ -685,12 +693,7 @@ elif page == "Neck Movement":
     with st.expander("Direction settings (check these once by testing)"):
         swap_lr = st.checkbox("Swap left/right (use if turning RIGHT shows as LEFT)")
         swap_fe = st.checkbox("Swap flexion/extension (use if looking DOWN shows as extension)")
-
-    # Mirror the on-screen preview only (measurements are unaffected).
-    st.markdown(
-        "<style>video { transform: scaleX(-1); }</style>",
-        unsafe_allow_html=True,
-    )
+        mirror = st.checkbox("Mirror the camera preview (selfie view)", value=False)
 
     ctx = webrtc_streamer(
         key="neck_movement",
@@ -708,6 +711,7 @@ elif page == "Neck Movement":
     else:
         processor.swap_left_right = swap_lr
         processor.swap_flex_ext = swap_fe
+        processor.mirror_preview = mirror
 
         if processor.is_calibrated:
             st.success("Neutral position calibrated.")
