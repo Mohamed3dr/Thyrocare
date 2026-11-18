@@ -2,7 +2,6 @@ import io
 import os
 from datetime import datetime, timedelta
 
-import av
 import cv2
 import librosa
 import mediapipe as mp
@@ -114,7 +113,7 @@ def roll_from_eyes(face, w, h):
 # NECK MOVEMENT VIDEO PROCESSOR
 # =========================================================
 class NeckMovementProcessor(VideoProcessorBase):
-    CALIBRATION_FRAMES = 30
+    CALIBRATION_FRAMES = 15
 
     def __init__(self):
         self.frame_count = 0
@@ -123,7 +122,6 @@ class NeckMovementProcessor(VideoProcessorBase):
         # UI-controlled sign options (set from the main Streamlit thread)
         self.swap_left_right = False
         self.swap_flex_ext = False
-        self.mirror_preview = False
 
         self.reset_calibration()
         self.reset_maxima()
@@ -138,7 +136,7 @@ class NeckMovementProcessor(VideoProcessorBase):
 
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
             max_num_faces=1,
-            refine_landmarks=True,
+            refine_landmarks=False,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
         )
@@ -172,10 +170,10 @@ class NeckMovementProcessor(VideoProcessorBase):
     # ---- frame loop -------------------------------------------------------
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
-        self._analyze(image)  # measurements always use the unflipped image
-        if self.mirror_preview:
-            image = cv2.flip(image, 1)
-        return av.VideoFrame.from_ndarray(image, format="bgr24")
+        self._tick = getattr(self, "_tick", 0) + 1
+        if self._tick % 2 == 0:  # analyse every 2nd frame to keep video smooth
+            self._analyze(image)  # measurements always use the unflipped image
+        return frame
 
     def _analyze(self, image):
         self.frame_count += 1
@@ -693,14 +691,27 @@ elif page == "Neck Movement":
     with st.expander("Direction settings (check these once by testing)"):
         swap_lr = st.checkbox("Swap left/right (use if turning RIGHT shows as LEFT)")
         swap_fe = st.checkbox("Swap flexion/extension (use if looking DOWN shows as extension)")
-        mirror = st.checkbox("Mirror the camera preview (selfie view)", value=False)
 
     ctx = webrtc_streamer(
         key="neck_movement",
         video_processor_factory=NeckMovementProcessor,
-        media_stream_constraints={"video": {"facingMode": "user"}, "audio": False},
+        media_stream_constraints={
+            "video": {
+                "facingMode": "user",
+                "width": {"ideal": 480},
+                "height": {"ideal": 360},
+                "frameRate": {"ideal": 30, "min": 15},
+            },
+            "audio": False,
+        },
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        async_processing=False,
+        async_processing=True,
+        video_html_attrs={
+            "style": {"width": "100%", "transform": "scaleX(-1)"},  # selfie (mirrored) view
+            "controls": False,
+            "autoPlay": True,
+            "muted": True,
+        },
     )
 
     st.write("Camera Status:", "Running" if ctx.state.playing else "Not running")
@@ -711,22 +722,15 @@ elif page == "Neck Movement":
     else:
         processor.swap_left_right = swap_lr
         processor.swap_flex_ext = swap_fe
-        processor.mirror_preview = mirror
-
-        if processor.is_calibrated:
-            st.success("Neutral position calibrated.")
-        else:
-            left = max(0, processor.CALIBRATION_FRAMES - len(processor.calibration_samples))
-            st.warning(f"Calibrating: {left} more frames needed. Keep your head still and face visible.")
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            if st.button(
-                "Start Assessment",
-                disabled=not processor.is_calibrated or processor.assessment_active,
-            ):
-                processor.start_assessment()
-                st.rerun()
+            if st.button("Start Assessment", disabled=processor.assessment_active):
+                if processor.is_calibrated:
+                    processor.start_assessment()
+                    st.rerun()
+                else:
+                    st.warning("Still calibrating. Wait for 'Neutral position calibrated' below, then press Start again.")
         with col_b:
             if st.button("Stop Assessment", disabled=not processor.assessment_active):
                 processor.stop_assessment()
@@ -746,7 +750,13 @@ elif page == "Neck Movement":
         @st.fragment(run_every=1)
         def live_results(p):
             if not p.is_calibrated:
+                left = max(0, p.CALIBRATION_FRAMES - len(p.calibration_samples))
+                if p.face_visible:
+                    st.warning(f"Calibrating: about {left} more frames. Keep your head still.")
+                else:
+                    st.error("No face detected. Face the camera in good light, with your whole face visible.")
                 return
+            st.success("Neutral position calibrated. You can start the assessment.")
             st.caption(
                 f"Face detected: {'yes' if p.face_visible else 'NO'} | "
                 f"live: pitch {p.current_pitch:+.1f}°, yaw {p.current_yaw:+.1f}°, roll {p.current_roll:+.1f}°"
