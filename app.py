@@ -329,7 +329,10 @@ def _supabase_cfg():
     try:
         cfg = dict(st.secrets["supabase"])
         if cfg.get("url") and cfg.get("key"):
-            return cfg["url"].rstrip("/"), cfg["key"]
+            url = cfg["url"].strip().rstrip("/")
+            if url.endswith("/rest/v1"):  # tolerate a URL pasted with the API path
+                url = url[: -len("/rest/v1")]
+            return url, cfg["key"].strip()
     except Exception:
         pass
     return None
