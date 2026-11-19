@@ -319,9 +319,10 @@ class NeckMovementProcessor(VideoProcessorBase):
 # =========================================================
 # HELPERS: STORAGE
 # =========================================================
-KIND = {VOICE_FILE: "voice", NECK_FILE: "neck"}
+PROFILE_FILE = "profile_local.csv"
+KIND = {VOICE_FILE: "voice", NECK_FILE: "neck", PROFILE_FILE: "profile"}
 PATIENTS_FILE = "patients_local.csv"
-NON_NUMERIC = ("Patient_ID", "Date", "Test_Type")
+NON_NUMERIC = ("Patient_ID", "Date", "Test_Type", "Name")
 
 
 def _supabase_cfg():
@@ -494,6 +495,28 @@ def create_patient(pid, pin):
     if os.path.exists(PATIENTS_FILE):
         df = pd.concat([pd.read_csv(PATIENTS_FILE, dtype=str), df], ignore_index=True)
     df.to_csv(PATIENTS_FILE, index=False)
+
+
+def clean_name(name):
+    name = re.sub(r"[*_`#<>\[\]\\]", "", name or "")
+    return re.sub(r"\s+", " ", name).strip()[:40]
+
+
+def get_display_name(pid):
+    if pid == "DEMO":
+        return "Demo Patient"
+    df = load_history(PROFILE_FILE, pid)
+    if df.empty or "Name" not in df.columns:
+        return None
+    names = df["Name"].dropna().astype(str)
+    return names.iloc[-1] if not names.empty else None
+
+
+def save_display_name(pid, name):
+    save_row(
+        PROFILE_FILE,
+        {"Patient_ID": pid, "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Name": name},
+    )
 
 
 def sign_in_or_create(pid, pin):
@@ -777,10 +800,10 @@ def profile_to_markdown(df):
     return "\n".join(lines)
 
 
-def build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note):
+def build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note, name=None):
     out = [
         "# VOICEGUARD AI - Patient Recovery Report",
-        f"Patient ID: {patient_id}",
+        f"Patient: {name or patient_id} (ID: {patient_id})",
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
         "## Summary",
@@ -875,9 +898,24 @@ def login_sidebar():
     sb = st.sidebar
     sb.markdown("### Patient sign-in")
     if st.session_state.get("patient_id"):
-        sb.success(f"Signed in: {st.session_state.patient_id}")
+        shown = st.session_state.get("patient_name") or st.session_state.patient_id
+        sb.success(f"Signed in: {shown}")
+        if st.session_state.get("patient_name") and st.session_state.patient_id != "DEMO":
+            with sb.expander("Change my name"):
+                new_name = st.text_input("New name", key="rename_input", max_chars=40)
+                if st.button("Update name"):
+                    cleaned = clean_name(new_name)
+                    if len(cleaned) < 2:
+                        st.error("Please type at least 2 characters.")
+                    else:
+                        try:
+                            save_display_name(st.session_state.patient_id, cleaned)
+                            st.session_state.patient_name = cleaned
+                            st.rerun()
+                        except Exception as error:
+                            st.error(f"Could not save the name: {error}")
         if sb.button("Sign out"):
-            for k in ("patient_id", "voice_result", "pitch_data", "voice_saved"):
+            for k in ("patient_id", "patient_name", "voice_result", "pitch_data", "voice_saved"):
                 st.session_state.pop(k, None)
             st.rerun()
     else:
@@ -922,6 +960,30 @@ if not patient_id:
     st.info("Sign in from the sidebar (or open the menu on a phone) to start.")
     st.stop()
 
+patient_name = st.session_state.get("patient_name")
+if not patient_name:
+    try:
+        patient_name = get_display_name(patient_id)
+    except Exception:
+        patient_name = None
+    if not patient_name:
+        st.header("Welcome! What is your name?")
+        st.write("Your name will appear in the app instead of your ID.")
+        typed = st.text_input("Your name", max_chars=40)
+        if st.button("Save my name"):
+            cleaned = clean_name(typed)
+            if len(cleaned) < 2:
+                st.error("Please type your name (at least 2 characters).")
+            else:
+                try:
+                    save_display_name(patient_id, cleaned)
+                    st.session_state.patient_name = cleaned
+                    st.rerun()
+                except Exception as error:
+                    st.error(f"Could not save the name: {error}")
+        st.stop()
+    st.session_state.patient_name = patient_name
+
 page = st.sidebar.radio(
     "MAIN MENU",
     [
@@ -946,8 +1008,8 @@ st.sidebar.caption(
 # DASHBOARD
 # =========================================================
 if page == "Dashboard":
-    st.header("Patient Dashboard")
-    st.write(f"Patient: **{patient_id}**")
+    st.header(f"Welcome, {patient_name} 👋")
+    st.write(f"Patient: **{patient_name}** (ID: {patient_id})")
 
     voice = load_history(VOICE_FILE, patient_id)
     neck = load_history(NECK_FILE, patient_id)
@@ -1194,7 +1256,7 @@ elif page == "Neck Movement":
 # =========================================================
 elif page == "AI Analysis":
     st.header("🧠 AI Recovery Analysis")
-    st.write(f"Patient: **{patient_id}**")
+    st.write(f"Patient: **{patient_name}** (ID: {patient_id})")
 
     st.subheader("Safety check")
     red_flags = [
@@ -1245,7 +1307,7 @@ elif page == "AI Analysis":
             st.markdown("**Neck movement** (baseline = first assessment)")
             show_table(neck_profile)
 
-        report_text = build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note)
+        report_text = build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note, patient_name)
         st.download_button(
             "Download report (.md)",
             data=report_text,
@@ -1265,7 +1327,7 @@ elif page == "AI Analysis":
 # =========================================================
 elif page == "Recovery Progress":
     st.header("📈 Recovery Progress")
-    st.write(f"Patient: **{patient_id}**")
+    st.write(f"Patient: **{patient_name}** (ID: {patient_id})")
 
     voice = load_history(VOICE_FILE, patient_id)
     neck = load_history(NECK_FILE, patient_id)
