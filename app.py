@@ -1,6 +1,8 @@
+import base64
 import hashlib
 import hmac
 import io
+import math
 import os
 import re
 import secrets as pysecrets
@@ -13,6 +15,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+from PIL import Image, ImageDraw
 from streamlit_webrtc import VideoProcessorBase, webrtc_streamer
 
 try:
@@ -798,53 +801,6 @@ def show_table(df):
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-def profile_to_markdown(df):
-    lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
-    for _, row in df.iterrows():
-        cells = [str(row.iloc[0])] + ["—" if pd.isna(v) else f"{v:.2f}" for v in row.iloc[1:]]
-        lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines)
-
-
-def build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note, name=None):
-    out = [
-        "# VOICEGUARD AI - Patient Recovery Report",
-        f"Patient: {name or patient_id} (ID: {patient_id})",
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        "",
-        "## Summary",
-    ]
-    if findings:
-        out.append("Review suggested:")
-        out += [f"- {f}" for f in findings]
-        out.append("")
-        out.append(
-            "Suggested next step: review the findings with the treating clinician and repeat "
-            "the standardized assessment under the same recording conditions."
-        )
-    else:
-        out.append("No notable change from the personal baseline was detected.")
-    for n in notes:
-        out.append(f"- Note: {n}")
-    if ml_note:
-        out.append(f"- {ml_note}")
-
-    for test, prof in voice_profiles.items():
-        out += ["", f"## Voice profile - {test}", profile_to_markdown(prof)]
-    if not neck_profile.empty:
-        out += ["", "## Neck movement profile (baseline = first assessment)", profile_to_markdown(neck_profile)]
-
-    out += [
-        "",
-        "---",
-        "Exploratory monitoring report. Not a medical diagnosis or treatment prescription. "
-        "Thresholds are demo values and have not been validated on post-thyroidectomy patients. "
-        "Camera-based neck angles are estimates, not clinical range-of-motion measurements. "
-        "Persistent hoarseness or voice change needs medical evaluation.",
-    ]
-    return "\n".join(out)
-
-
 VOICE_PDF_COLUMNS = [
     ("Date", "Date", "date"),
     ("Test_Type", "Test", "text"),
@@ -953,6 +909,120 @@ def history_pdf(title, patient_name, patient_id, df, columns):
     return buf.getvalue()
 
 
+def report_pdf(patient_name, patient_id, findings, notes, voice_profiles, neck_profile, ml_note):
+    """Printable PDF version of the recovery report. Returns bytes."""
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    navy, teal, ink = colors.HexColor("#153A5B"), colors.HexColor("#167D9A"), colors.HexColor("#263445")
+    margin = 16 * mm
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Title"], textColor=navy, fontSize=20, alignment=0, spaceAfter=4)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=navy, fontSize=13, spaceBefore=12, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["Normal"], fontSize=10, leading=14, textColor=ink)
+    small = ParagraphStyle("small", parent=body, fontSize=8.5, leading=11, textColor=colors.HexColor("#5B6B7C"))
+    cell = ParagraphStyle("cell", parent=body, fontSize=9, leading=11)
+    head = ParagraphStyle("head", parent=cell, textColor=colors.white, fontName="Helvetica-Bold")
+
+    def latin_only(text):
+        return text if text and all(ord(ch) < 256 for ch in text) else None
+
+    def num(v, signed=False):
+        if v is None or pd.isna(v):
+            return "-"
+        return f"{v:+.1f}" if signed else f"{v:.2f}"
+
+    def profile_table(prof):
+        data = [[Paragraph(escape(str(c)), head) for c in prof.columns]]
+        for _, row in prof.iterrows():
+            cells = [Paragraph(escape(str(row.iloc[0])), cell)]
+            for col in prof.columns[1:]:
+                cells.append(Paragraph(num(row[col], signed=col.startswith("Change")), cell))
+            data.append(cells)
+        usable = A4[0] - 2 * margin
+        widths = [usable * w for w in (0.32, 0.15, 0.15, 0.15, 0.23)]
+        t = Table(data, colWidths=widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), navy),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F7FB")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#DCE5EF")),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.2, teal),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return t
+
+    shown = latin_only(patient_name)
+    who = f"{escape(shown)} (ID: {escape(str(patient_id))})" if shown else f"ID: {escape(str(patient_id))}"
+    story = [
+        Paragraph("Patient Recovery Report", h1),
+        Paragraph(f"<b>Patient:</b> {who}", body),
+        Paragraph(f"<b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}", body),
+        Spacer(1, 6 * mm),
+    ]
+
+    if findings:
+        bg, fg, label = colors.HexColor("#FFF4D6"), colors.HexColor("#7A5200"), "Review suggested"
+    else:
+        bg, fg, label = colors.HexColor("#E3F5EA"), colors.HexColor("#1E6B3A"), "No notable change from baseline"
+    banner = Table(
+        [[Paragraph(f"<b>{label}</b>", ParagraphStyle("b", parent=body, textColor=fg, fontSize=12))]],
+        colWidths=[A4[0] - 2 * margin],
+    )
+    banner.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), bg), ("TOPPADDING", (0, 0), (-1, -1), 8),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 8), ("LEFTPADDING", (0, 0), (-1, -1), 10)]))
+    story.append(banner)
+    story.append(Spacer(1, 4 * mm))
+
+    for f in findings:
+        story.append(Paragraph(f"&bull; {escape(f)}", body))
+    if findings:
+        story.append(Spacer(1, 3 * mm))
+        story.append(Paragraph(
+            "<b>Suggested next step:</b> review the findings with the treating clinician and repeat the "
+            "standardized assessment under the same recording conditions.", body))
+    for n in notes:
+        story.append(Paragraph(f"<i>Note: {escape(n)}</i>", small))
+    if ml_note:
+        story.append(Paragraph(escape(ml_note), small))
+
+    for test, prof in voice_profiles.items():
+        story.append(KeepTogether([Paragraph(f"Voice profile: {escape(test)}", h2), profile_table(prof)]))
+    if not neck_profile.empty:
+        story.append(KeepTogether([
+            Paragraph("Neck movement profile (baseline = first assessment)", h2), profile_table(neck_profile)]))
+
+    story += [
+        Spacer(1, 8 * mm),
+        Paragraph(
+            "Exploratory monitoring report, not a medical diagnosis or treatment prescription. Thresholds are "
+            "demo values and have not been validated on post-thyroidectomy patients. Camera-based neck angles are "
+            "estimates, not clinical range-of-motion measurements. Persistent hoarseness or voice change needs "
+            "medical evaluation. Seek urgent care for difficulty breathing, stridor, rapidly increasing neck "
+            "swelling, or new or severe difficulty swallowing.", small),
+    ]
+
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#5B6B7C"))
+        canvas.drawString(margin, 8 * mm, "VOICEGUARD AI")
+        canvas.drawRightString(A4[0] - margin, 8 * mm, f"Page {doc.page}")
+        canvas.restoreState()
+
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=A4, leftMargin=margin, rightMargin=margin, topMargin=margin,
+                      bottomMargin=16 * mm, title="Patient Recovery Report").build(
+        story, onFirstPage=footer, onLaterPages=footer)
+    return buf.getvalue()
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _metered_ice_servers(app_name, api_key):
     r = requests.get(
@@ -989,6 +1059,358 @@ def get_rtc_configuration():
     except Exception:
         pass
     return {"iceServers": servers}
+
+
+# =========================================================
+# EXERCISE ANIMATIONS (drawn in code with Pillow: no image files needed)
+# =========================================================
+EX_SIZE = 360
+EX_K = 2  # draw at 2x and shrink for smooth edges
+EX_INK = (21, 58, 91)
+EX_FILL = (214, 230, 242)
+EX_BACK = (190, 208, 225)
+EX_ACCENT = (22, 125, 154)
+EX_BG = (234, 242, 248)
+EX_GUIDE = (150, 175, 200)
+
+
+def _ex_p(pt):
+    return (pt[0] * EX_K, pt[1] * EX_K)
+
+
+def _ex_rot(pt, pivot, deg):
+    a = math.radians(deg)
+    dx, dy = pt[0] - pivot[0], pt[1] - pivot[1]
+    return (pivot[0] + dx * math.cos(a) - dy * math.sin(a), pivot[1] + dx * math.sin(a) + dy * math.cos(a))
+
+
+def _ex_circle(d, c, r, fill, outline=EX_INK, w=3):
+    d.ellipse(
+        [(c[0] - r) * EX_K, (c[1] - r) * EX_K, (c[0] + r) * EX_K, (c[1] + r) * EX_K],
+        fill=fill, outline=outline, width=int(w * EX_K),
+    )
+
+
+def _ex_limb(d, pts, w, fill=EX_FILL):
+    """A rounded, outlined thick line (neck, arms, torso)."""
+    for width, color in ((w + 6, EX_INK), (w, fill)):
+        d.line([_ex_p(p) for p in pts], fill=color, width=int(width * EX_K), joint="curve")
+        for p in (pts[0], pts[-1]):
+            r = width / 2
+            d.ellipse([(p[0] - r) * EX_K, (p[1] - r) * EX_K, (p[0] + r) * EX_K, (p[1] + r) * EX_K], fill=color)
+
+
+def _ex_dashed(d, p0, p1, color=EX_GUIDE, w=2, dash=9, gap=7):
+    length = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+    ux, uy = (p1[0] - p0[0]) / length, (p1[1] - p0[1]) / length
+    pos = 0.0
+    while pos < length:
+        end = min(pos + dash, length)
+        d.line([_ex_p((p0[0] + ux * pos, p0[1] + uy * pos)), _ex_p((p0[0] + ux * end, p0[1] + uy * end))],
+               fill=color, width=int(w * EX_K))
+        pos += dash + gap
+
+
+def _ex_front(d, turn=0.0, tilt=0.0, sh_off=((0, 0), (0, 0)), breath=0.0, chest=0.0,
+              back=False, blade=0.0, show_level=False, roll_guides=False, breathing=False):
+    cx = 180
+    (ldx, ldy), (rdx, rdy) = sh_off
+    lx, ly = 118 + ldx, 222 + ldy
+    rx, ry = 242 + rdx, 222 + rdy
+    widen = chest * 12
+    torso = [(lx - widen, ly), (rx + widen, ry), (rx - 6 + widen, 372), (lx + 6 - widen, 372)]
+    d.polygon([_ex_p(p) for p in torso], fill=EX_FILL, outline=EX_INK)
+    d.line([_ex_p(p) for p in torso + [torso[0]]], fill=EX_INK, width=int(3 * EX_K))
+    _ex_limb(d, [(lx - widen, ly + 6), (lx - 18 - widen, 340)], 16)
+    _ex_limb(d, [(rx + widen, ry + 6), (rx + 18 + widen, 340)], 16)
+
+    if show_level:
+        _ex_dashed(d, (96, 222), (264, 222), EX_ACCENT, 2)
+    if roll_guides:
+        for (sx, sy) in ((118, 222), (242, 222)):
+            d.ellipse([(sx - 13) * EX_K, (sy - 13) * EX_K, (sx + 13) * EX_K, (sy + 13) * EX_K],
+                      outline=EX_ACCENT, width=int(2 * EX_K))
+        for (jx, jy) in ((lx, ly), (rx, ry)):
+            d.ellipse([(jx - 6) * EX_K, (jy - 6) * EX_K, (jx + 6) * EX_K, (jy + 6) * EX_K],
+                      fill=EX_ACCENT, outline=EX_INK, width=int(2 * EX_K))
+
+    base = ((ly + ry) / 2 - 6, (lx + rx) / 2)
+    base_pt = (base[1], base[0])
+    head0 = (cx, 128)  # the head stays put; only the shoulders move
+    head = _ex_rot(head0, base_pt, tilt)
+    _ex_limb(d, [base_pt, head], 22)
+    _ex_circle(d, head, 42, EX_BACK if back else EX_FILL)
+
+    if back:
+        # shoulder blades + spine
+        _ex_dashed(d, (cx, ly + 10), (cx, 360), EX_GUIDE, 2)
+        gap = 36 - blade * 22
+        for sign in (-1, 1):
+            bx, by = cx + sign * gap, ly + 62
+            d.ellipse([(bx - 17) * EX_K, (by - 30) * EX_K, (bx + 17) * EX_K, (by + 30) * EX_K],
+                      fill=EX_ACCENT if blade > 0.5 else (170, 205, 220), outline=EX_INK, width=int(3 * EX_K))
+    else:
+        shift = turn * 13
+        face = lambda p: _ex_rot((head0[0] + p[0], head0[1] + p[1]), base_pt, tilt)
+        hc = head
+        for ex in (-15, 15):
+            e = _ex_rot((head0[0] + ex * (1 - 0.25 * abs(turn)) + shift, head0[1] - 6), base_pt, tilt)
+            d.ellipse([(e[0] - 3.5) * EX_K, (e[1] - 3.5) * EX_K, (e[0] + 3.5) * EX_K, (e[1] + 3.5) * EX_K], fill=EX_INK)
+        n0 = _ex_rot((head0[0] + shift * 1.25, head0[1] - 2), base_pt, tilt)
+        n1 = _ex_rot((head0[0] + shift * 1.25 + 4, head0[1] + 12), base_pt, tilt)
+        d.line([_ex_p(n0), _ex_p(n1)], fill=EX_INK, width=int(3 * EX_K))
+        m0 = _ex_rot((head0[0] - 10 + shift, head0[1] + 25), base_pt, tilt)
+        m1 = _ex_rot((head0[0] + 10 + shift, head0[1] + 25), base_pt, tilt)
+        d.line([_ex_p(m0), _ex_p(m1)], fill=EX_INK, width=int(3 * EX_K))
+
+    if breathing:
+        rx_b, ry_b = 30 + breath * 24, 22 + breath * 12
+        d.ellipse([(cx - rx_b) * EX_K, (300 - ry_b) * EX_K, (cx + rx_b) * EX_K, (300 + ry_b) * EX_K],
+                  fill=(190, 225, 235), outline=EX_ACCENT, width=int(3 * EX_K))
+        for sign in (-1, 1):
+            hx = cx + sign * (rx_b + 14)
+            _ex_circle(d, (hx, 300), 9, EX_FILL, EX_INK, 2)
+
+
+def _ex_side(d, head_dx=0.0, pitch=0.0, sh_dx=0.0, plumb=False):
+    hip = (178, 352)
+    sh = (176 + sh_dx, 232)
+    nb = (176 + sh_dx + head_dx * 0.25, 206)
+    _ex_limb(d, [nb, (176 + sh_dx * 0.6, 262), (176 + sh_dx * 0.3, 300), hip], 46)
+    _ex_circle(d, (sh[0] + 2, sh[1] + 14), 16, EX_FILL, EX_INK, 3)
+    head0 = (176 + head_dx, 138)
+    head = _ex_rot(head0, nb, pitch)
+    _ex_limb(d, [nb, head], 20)
+    _ex_circle(d, head, 40, EX_FILL)
+    tip = _ex_rot((head0[0] + 52, head0[1] + 6), nb, pitch)
+    top = _ex_rot((head0[0] + 38, head0[1] - 4), nb, pitch)
+    bot = _ex_rot((head0[0] + 38, head0[1] + 14), nb, pitch)
+    d.polygon([_ex_p(top), _ex_p(tip), _ex_p(bot)], fill=EX_FILL, outline=EX_INK)
+    d.line([_ex_p(top), _ex_p(tip), _ex_p(bot)], fill=EX_INK, width=int(3 * EX_K))
+    eye = _ex_rot((head0[0] + 14, head0[1] - 8), nb, pitch)
+    d.ellipse([(eye[0] - 3.5) * EX_K, (eye[1] - 3.5) * EX_K, (eye[0] + 3.5) * EX_K, (eye[1] + 3.5) * EX_K], fill=EX_INK)
+    ear = _ex_rot((head0[0] - 6, head0[1] + 2), nb, pitch)
+    d.ellipse([(ear[0] - 6) * EX_K, (ear[1] - 8) * EX_K, (ear[0] + 6) * EX_K, (ear[1] + 8) * EX_K],
+              fill=EX_BACK, outline=EX_INK, width=int(2 * EX_K))
+    if plumb:
+        _ex_dashed(d, (176, 70), (176, 372), EX_ACCENT, 2)
+
+
+def _ex_bar(d, progress):
+    """Small bar at the top that fills while breathing in and empties while breathing out."""
+    x0, x1, y = 70, 290, 26
+    d.rounded_rectangle([x0 * EX_K, (y - 8) * EX_K, x1 * EX_K, (y + 8) * EX_K], radius=8 * EX_K,
+                        fill=(255, 255, 255), outline=EX_INK, width=int(2 * EX_K))
+    if progress > 0.02:
+        d.rounded_rectangle([x0 * EX_K, (y - 8) * EX_K, (x0 + (x1 - x0) * progress) * EX_K, (y + 8) * EX_K],
+                            radius=8 * EX_K, fill=EX_ACCENT)
+
+
+EXERCISE_ANIMATIONS = {
+    "neck_flexion": dict(frames=36, ms=90),
+    "neck_rotation": dict(frames=40, ms=90),
+    "neck_lateral": dict(frames=40, ms=90),
+    "shoulder_roll": dict(frames=36, ms=90),
+    "shoulder_shrug": dict(frames=36, ms=90),
+    "scapular_squeeze": dict(frames=36, ms=90),
+    "chin_tuck": dict(frames=36, ms=90),
+    "tall_posture": dict(frames=36, ms=90),
+    "belly_breath": dict(frames=48, ms=110),
+    "rib_breath": dict(frames=48, ms=110),
+}
+
+
+def _ex_draw(key, t):
+    s = (1 - math.cos(2 * math.pi * t)) / 2      # 0 -> 1 -> 0
+    w = math.sin(2 * math.pi * t)                 # -1 .. 1
+    img = Image.new("RGB", (EX_SIZE * EX_K, EX_SIZE * EX_K), EX_BG)
+    d = ImageDraw.Draw(img)
+    if key == "neck_flexion":
+        _ex_side(d, pitch=38 * s)
+    elif key == "neck_rotation":
+        _ex_front(d, turn=w)
+    elif key == "neck_lateral":
+        _ex_front(d, tilt=24 * w, show_level=True)
+    elif key == "shoulder_roll":
+        th = 2 * math.pi * t - math.pi / 2
+        off = (11 * math.cos(th), 11 * math.sin(th))
+        _ex_front(d, sh_off=(off, (-off[0], off[1])), roll_guides=True)
+    elif key == "shoulder_shrug":
+        _ex_front(d, sh_off=((0, -20 * s), (0, -20 * s)), show_level=True)
+    elif key == "scapular_squeeze":
+        _ex_front(d, back=True, blade=s)
+    elif key == "chin_tuck":
+        _ex_side(d, head_dx=30 * (1 - s), plumb=True)
+    elif key == "tall_posture":
+        _ex_side(d, head_dx=32 * (1 - s), sh_dx=16 * (1 - s), plumb=True)
+    elif key == "belly_breath":
+        _ex_front(d, breath=s, breathing=True)
+        _ex_bar(d, s)
+    elif key == "rib_breath":
+        _ex_front(d, breath=0.3 * s, chest=s, breathing=True)
+        _ex_bar(d, s)
+    return img.resize((300, 300), Image.LANCZOS)
+
+
+@st.cache_data(show_spinner=False)
+def exercise_gif(key):
+    """Animated GIF (bytes) for an exercise key."""
+    cfg = EXERCISE_ANIMATIONS[key]
+    frames = [_ex_draw(key, i / cfg["frames"]) for i in range(cfg["frames"])]
+    palette = frames[0].quantize(colors=64, method=Image.MEDIANCUT)
+    none = getattr(Image, "Dither", Image).NONE
+    quant = [f.quantize(palette=palette, dither=none) for f in frames]
+    buf = io.BytesIO()
+    quant[0].save(buf, format="GIF", save_all=True, append_images=quant[1:],
+                  duration=cfg["ms"], loop=0)
+    return buf.getvalue()
+
+
+@st.cache_data(show_spinner=False)
+def exercise_gif_b64(key):
+    return base64.b64encode(exercise_gif(key)).decode()
+
+
+EXERCISE_LIBRARY = {
+    "Gentle Neck ROM": {
+        "goal": "Gentle, pain-free neck movements to improve mobility. Only within the range your surgeon or physiotherapist approved.",
+        "exercises": [
+            {
+                "key": "neck_flexion",
+                "name": "Chin to chest (gentle forward bend)",
+                "steps": [
+                    "Sit tall with your shoulders relaxed and your eyes looking forward.",
+                    "Slowly lower your chin toward your chest until you feel a gentle stretch.",
+                    "Hold for 2 to 3 seconds, breathing normally.",
+                    "Slowly lift back to the starting position.",
+                ],
+                "dose": "About 5 slow repetitions, or as your physiotherapist advises.",
+                "caution": "Never pull with your hands. Stop if you feel pain, pulling at the scar, dizziness or tingling. Do not tilt your head far backward unless your surgeon says it is fine.",
+            },
+            {
+                "key": "neck_rotation",
+                "name": "Turn your head side to side",
+                "steps": [
+                    "Sit tall and look straight ahead with your shoulders level.",
+                    "Slowly turn your head to one side as far as is comfortable, without moving your shoulders.",
+                    "Hold for 2 seconds, then return to the centre.",
+                    "Repeat to the other side.",
+                ],
+                "dose": "About 5 times to each side, moving slowly.",
+                "caution": "Move only as far as is comfortable. Stop if you feel pain, dizziness or tingling.",
+            },
+            {
+                "key": "neck_lateral",
+                "name": "Ear toward shoulder",
+                "steps": [
+                    "Sit tall with both shoulders relaxed and level (use the dotted line as a guide).",
+                    "Slowly tilt your head so your ear moves toward your shoulder.",
+                    "Keep the shoulder down. Do not lift it to meet your ear.",
+                    "Hold for 2 seconds, return to the centre, then repeat to the other side.",
+                ],
+                "dose": "About 5 times to each side.",
+                "caution": "Stop if you feel pain or pulling at the scar.",
+            },
+        ],
+    },
+    "Shoulder Mobility": {
+        "goal": "Reduce shoulder and upper-back stiffness that can follow surgery.",
+        "exercises": [
+            {
+                "key": "shoulder_roll",
+                "name": "Shoulder rolls",
+                "steps": [
+                    "Stand or sit tall with your arms relaxed by your sides.",
+                    "Lift your shoulders up, then roll them back and down in a smooth circle.",
+                    "Keep your neck relaxed and keep breathing normally.",
+                ],
+                "dose": "5 to 10 slow circles. Then try the other direction.",
+                "caution": "Keep the circles small and smooth. Stop if you feel pain.",
+            },
+            {
+                "key": "shoulder_shrug",
+                "name": "Shoulder shrugs",
+                "steps": [
+                    "Sit or stand with your arms relaxed.",
+                    "Lift both shoulders up toward your ears (the dotted line shows where they started).",
+                    "Hold for 2 seconds, then slowly lower them and let go of the tension.",
+                ],
+                "dose": "5 to 10 slow repetitions.",
+                "caution": "Do not force the movement. Stop if you feel pain or pulling in your neck.",
+            },
+            {
+                "key": "scapular_squeeze",
+                "name": "Shoulder blade squeeze",
+                "steps": [
+                    "Sit or stand tall with your arms relaxed (this view is from behind).",
+                    "Gently squeeze your shoulder blades back and down, as if holding a pencil between them.",
+                    "Hold for 3 seconds, then relax.",
+                ],
+                "dose": "5 to 10 repetitions.",
+                "caution": "Keep your shoulders down, away from your ears. Do not arch your lower back.",
+            },
+        ],
+    },
+    "Postural Correction": {
+        "goal": "Keep the head stacked over the shoulders and avoid the forward-head posture that adds strain.",
+        "exercises": [
+            {
+                "key": "chin_tuck",
+                "name": "Chin tuck",
+                "steps": [
+                    "Sit or stand tall, looking straight ahead (the dotted line is your guide).",
+                    "Slide your head straight backward, as if making a gentle double chin. Keep your eyes level.",
+                    "Hold for 3 seconds, then relax forward.",
+                ],
+                "dose": "5 to 8 repetitions.",
+                "caution": "Do not tilt your head down or up. This should be a small, comfortable movement.",
+            },
+            {
+                "key": "tall_posture",
+                "name": "Stand tall (posture reset)",
+                "steps": [
+                    "Start slouched, then lift your chest slightly and relax your shoulders back.",
+                    "Line up your ear, shoulder and hip along the dotted line.",
+                    "Hold while breathing normally, then check yourself in a mirror.",
+                ],
+                "dose": "Hold 10 to 20 seconds, a few times during the day.",
+                "caution": "Stay relaxed. Do not stiffen your neck or push your chest out too far.",
+            },
+        ],
+    },
+    "Breathing Exercises": {
+        "goal": "Slow, relaxed breathing to improve breath control, which also supports the voice. The bar at the top shows when to breathe in (fills) and out (empties).",
+        "exercises": [
+            {
+                "key": "belly_breath",
+                "name": "Belly (diaphragmatic) breathing",
+                "steps": [
+                    "Sit or lie comfortably with one or both hands on your belly.",
+                    "Breathe in slowly through your nose for about 3 to 4 seconds. Let your belly rise.",
+                    "Breathe out slowly through slightly pursed lips for about 4 to 6 seconds.",
+                    "Keep your shoulders and neck relaxed.",
+                ],
+                "dose": "5 to 10 breaths, a few times a day.",
+                "caution": "Stop and rest if you feel light-headed. Do not force the breath.",
+            },
+            {
+                "key": "rib_breath",
+                "name": "Side rib breathing",
+                "steps": [
+                    "Place your hands on the sides of your lower ribs.",
+                    "Breathe in slowly through your nose and feel your ribs widen sideways under your hands.",
+                    "Breathe out slowly and feel them gently come back in.",
+                ],
+                "dose": "5 to 10 breaths.",
+                "caution": "Keep your shoulders down. Stop if you feel light-headed.",
+            },
+        ],
+    },
+}
+
+# Optional: paste your own video link (YouTube or a direct .mp4 URL) for any exercise key,
+# for example:  "neck_rotation": "https://www.youtube.com/watch?v=XXXX"
+EXERCISE_VIDEOS = {}
 
 
 # =========================================================
@@ -1307,8 +1729,27 @@ elif page == "Neck Movement":
         },
     )
 
-    st.write("Camera Status:", "Running" if ctx.state.playing else "Not running")
+    playing = bool(ctx.state.playing)
+    if playing and not st.session_state.get("neck_was_playing", False):
+        # The camera was (re)started: begin a fresh assessment and drop the old results.
+        st.session_state.pop("neck_result", None)
+        st.session_state.pop("neck_saved", None)
+    st.session_state["neck_was_playing"] = playing
+
+    st.write("Camera Status:", "Running" if playing else "Not running")
     processor = ctx.video_processor
+
+    def neck_snapshot(p):
+        return {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Flexion": float(p.max_flexion),
+            "Extension": float(p.max_extension),
+            "Right_Rotation": float(p.max_right_rotation),
+            "Left_Rotation": float(p.max_left_rotation),
+            "Tilt_Right": float(p.max_tilt_right),
+            "Tilt_Left": float(p.max_tilt_left),
+            "movement": pd.DataFrame(p.movement_data),
+        }
 
     if processor is None:
         st.info("Waiting for the camera. Allow camera permission and press Start.")
@@ -1321,12 +1762,16 @@ elif page == "Neck Movement":
             if st.button("Start Assessment", disabled=processor.assessment_active):
                 if processor.is_calibrated:
                     processor.start_assessment()
+                    st.session_state.pop("neck_result", None)
+                    st.session_state.pop("neck_saved", None)
                     st.rerun()
                 else:
                     st.warning("Still calibrating. Wait for 'Neutral position calibrated' below, then press Start again.")
         with col_b:
             if st.button("Stop Assessment", disabled=not processor.assessment_active):
                 processor.stop_assessment()
+                st.session_state["neck_result"] = neck_snapshot(processor)
+                st.session_state["neck_saved"] = False
                 st.rerun()
         with col_c:
             if st.button("Recalibrate", disabled=processor.assessment_active):
@@ -1354,46 +1799,68 @@ elif page == "Neck Movement":
                 f"Face detected: {'yes' if p.face_visible else 'NO'} | "
                 f"live: pitch {p.current_pitch:+.1f}°, yaw {p.current_yaw:+.1f}°, roll {p.current_roll:+.1f}°"
             )
-            st.subheader("Maximum movement (degrees from neutral)")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Flexion", f"{p.max_flexion:.1f}°")
-            c1.metric("Extension", f"{p.max_extension:.1f}°")
-            c2.metric("Right rotation", f"{p.max_right_rotation:.1f}°")
-            c2.metric("Left rotation", f"{p.max_left_rotation:.1f}°")
-            c3.metric("Tilt right", f"{p.max_tilt_right:.1f}°")
-            c3.metric("Tilt left", f"{p.max_tilt_left:.1f}°")
+            if p.assessment_active:
+                # Keep a running copy, so the results survive even if the camera is closed.
+                st.session_state["neck_result"] = neck_snapshot(p)
+                st.subheader("Assessment in progress: maximum movement so far")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Flexion", f"{p.max_flexion:.1f}°")
+                c1.metric("Extension", f"{p.max_extension:.1f}°")
+                c2.metric("Right rotation", f"{p.max_right_rotation:.1f}°")
+                c2.metric("Left rotation", f"{p.max_left_rotation:.1f}°")
+                c3.metric("Tilt right", f"{p.max_tilt_right:.1f}°")
+                c3.metric("Tilt left", f"{p.max_tilt_left:.1f}°")
 
         live_results(processor)
 
+    # ---- results of the last assessment: stay on screen until the camera is started again
+    result = st.session_state.get("neck_result")
+    assessment_running = processor is not None and processor.assessment_active
+    if result is not None and not assessment_running:
+        st.divider()
+        st.subheader("Assessment results")
         st.caption(
-            "Camera-based estimates relative to your neutral position. They are not validated "
-            "clinical range-of-motion measurements and do not replace a goniometer or a physiotherapist."
+            f"Recorded {result['time']}. These results stay here until you start the camera again, "
+            "so you can save them."
         )
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Flexion", f"{result['Flexion']:.1f}°")
+        r1.metric("Extension", f"{result['Extension']:.1f}°")
+        r2.metric("Right rotation", f"{result['Right_Rotation']:.1f}°")
+        r2.metric("Left rotation", f"{result['Left_Rotation']:.1f}°")
+        r3.metric("Tilt right", f"{result['Tilt_Right']:.1f}°")
+        r3.metric("Tilt left", f"{result['Tilt_Left']:.1f}°")
+        if not result["movement"].empty:
+            st.markdown("**Recorded movement (last 100 samples)**")
+            st.line_chart(result["movement"].tail(100))
 
-        if processor.movement_data:
-            df = pd.DataFrame(processor.movement_data)
-            st.subheader("Recorded movement (last 100 samples)")
-            st.line_chart(df.tail(100))
+        already_saved = st.session_state.get("neck_saved", False)
+        if st.button("Save Neck Assessment", disabled=already_saved):
+            try:
+                save_row(
+                    NECK_FILE,
+                    {
+                        "Patient_ID": patient_id,
+                        "Date": result["time"],
+                        "Flexion": result["Flexion"],
+                        "Extension": result["Extension"],
+                        "Right_Rotation": result["Right_Rotation"],
+                        "Left_Rotation": result["Left_Rotation"],
+                        "Tilt_Right": result["Tilt_Right"],
+                        "Tilt_Left": result["Tilt_Left"],
+                    },
+                )
+                st.session_state["neck_saved"] = True
+                st.success("Neck assessment saved.")
+            except Exception as error:
+                st.error(f"Could not save assessment: {error}")
+        if already_saved:
+            st.caption("This assessment has been saved.")
 
-        if processor.assessment_completed and not processor.assessment_active:
-            if st.button("Save Neck Assessment"):
-                try:
-                    save_row(
-                        NECK_FILE,
-                        {
-                            "Patient_ID": patient_id,
-                            "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Flexion": processor.max_flexion,
-                            "Extension": processor.max_extension,
-                            "Right_Rotation": processor.max_right_rotation,
-                            "Left_Rotation": processor.max_left_rotation,
-                            "Tilt_Right": processor.max_tilt_right,
-                            "Tilt_Left": processor.max_tilt_left,
-                        },
-                    )
-                    st.success("Neck assessment saved.")
-                except Exception as error:
-                    st.error(f"Could not save assessment: {error}")
+    st.caption(
+        "Camera-based estimates relative to your neutral position. They are not validated "
+        "clinical range-of-motion measurements and do not replace a goniometer or a physiotherapist."
+    )
 
 
 # =========================================================
@@ -1452,13 +1919,15 @@ elif page == "AI Analysis":
             st.markdown("**Neck movement** (baseline = first assessment)")
             show_table(neck_profile)
 
-        report_text = build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_note, patient_name)
-        st.download_button(
-            "Download report (.md)",
-            data=report_text,
-            file_name=f"voiceguard_report_{patient_id}.md",
-            mime="text/markdown",
-        )
+        if HAS_REPORTLAB:
+            st.download_button(
+                "Download report (PDF)",
+                report_pdf(patient_name, patient_id, findings, notes, voice_profiles, neck_profile, ml_note),
+                file_name=f"voiceguard_report_{patient_id}.pdf",
+                mime="application/pdf",
+            )
+        else:
+            st.info("PDF export needs the 'reportlab' package (add it to requirements.txt).")
 
     st.caption(
         "Exploratory monitoring tool, not a diagnosis. Persistent hoarseness or voice change "
@@ -1503,21 +1972,6 @@ elif page == "Recovery Progress":
                 )
         else:
             st.info("PDF export needs the 'reportlab' package (add it to requirements.txt).")
-        d1, d2 = st.columns(2)
-        if not voice.empty:
-            d1.download_button(
-                "Download voice history (CSV)",
-                voice.to_csv(index=False),
-                file_name=f"voice_history_{patient_id}.csv",
-                mime="text/csv",
-            )
-        if not neck.empty:
-            d2.download_button(
-                "Download neck history (CSV)",
-                neck.to_csv(index=False),
-                file_name=f"neck_history_{patient_id}.csv",
-                mime="text/csv",
-            )
 
     if not voice.empty:
         if "Test_Type" not in voice.columns:
@@ -1549,14 +2003,40 @@ elif page == "Exercise Library":
         "physiotherapist. Not every thyroidectomy patient needs the same exercises. "
         "Specialized voice therapy belongs to a Speech-Language Pathologist."
     )
+    st.error(
+        "Do not exercise, and get urgent medical care, if you have difficulty breathing, noisy "
+        "breathing (stridor), rapidly increasing neck swelling, or new or severe difficulty swallowing."
+    )
 
-    library = {
-        "Gentle Neck ROM": "Slow, pain-free movements within the range your clinician approved.",
-        "Shoulder Mobility": "Gentle shoulder rolls and arm raises to reduce stiffness.",
-        "Postural Correction": "Keep the head stacked over the shoulders; avoid forward-head posture.",
-        "Breathing Exercises": "Slow diaphragmatic breathing to support breath control.",
-    }
-    for name, desc in library.items():
-        with st.expander(name):
-            st.write(desc)
-            st.caption("Add a video or animation here. Stop if you feel pain, dizziness or tingling.")
+    with st.spinner("Preparing the exercise animations..."):
+        for _cat in EXERCISE_LIBRARY.values():
+            for _ex in _cat["exercises"]:
+                exercise_gif_b64(_ex["key"])
+
+    tabs = st.tabs(list(EXERCISE_LIBRARY.keys()))
+    for tab, (category, info) in zip(tabs, EXERCISE_LIBRARY.items()):
+        with tab:
+            st.caption(info["goal"])
+            for ex in info["exercises"]:
+                with st.container(border=True):
+                    left, right = st.columns([1, 1.5])
+                    with left:
+                        st.markdown(
+                            f'<img src="data:image/gif;base64,{exercise_gif_b64(ex["key"])}" '
+                            f'alt="{ex["name"]}" style="width:100%;max-width:320px;border-radius:12px;">',
+                            unsafe_allow_html=True,
+                        )
+                    with right:
+                        st.markdown(f"**{ex['name']}**")
+                        for i, step in enumerate(ex["steps"], start=1):
+                            st.write(f"{i}. {step}")
+                        st.caption(f"**How much:** {ex['dose']}")
+                        st.caption(f"**Be careful:** {ex['caution']}")
+                    video = EXERCISE_VIDEOS.get(ex["key"])
+                    if video:
+                        st.video(video)
+
+    st.caption(
+        "Stop any exercise if you feel pain, dizziness, tingling or pulling at the scar. "
+        "The repetitions shown are general examples; follow your own physiotherapist's plan."
+    )
