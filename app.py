@@ -23,6 +23,12 @@ except Exception:
     HAS_PRAAT = False
 
 try:
+    import reportlab  # noqa: F401
+    HAS_REPORTLAB = True
+except Exception:
+    HAS_REPORTLAB = False
+
+try:
     from sklearn.ensemble import IsolationForest
     HAS_SKLEARN = True
 except Exception:
@@ -839,14 +845,139 @@ def build_report(patient_id, findings, notes, voice_profiles, neck_profile, ml_n
     return "\n".join(out)
 
 
+VOICE_PDF_COLUMNS = [
+    ("Date", "Date", "date"),
+    ("Test_Type", "Test", "text"),
+    ("Phonation_sec", "Phonation (s)", "num2"),
+    ("Median_Pitch_Hz", "Median pitch (Hz)", "num1"),
+    ("Pitch_Range_Hz", "Pitch range (Hz)", "num1"),
+    ("Pitch_Variability_percent", "Pitch variability (%)", "num2"),
+    ("Jitter_percent", "Jitter (%)", "num2"),
+    ("Shimmer_percent", "Shimmer (%)", "num2"),
+    ("HNR_dB", "HNR (dB)", "num1"),
+]
+NECK_PDF_COLUMNS = [
+    ("Date", "Date", "date"),
+    ("Flexion", "Flexion (°)", "num1"),
+    ("Extension", "Extension (°)", "num1"),
+    ("Right_Rotation", "Right rotation (°)", "num1"),
+    ("Left_Rotation", "Left rotation (°)", "num1"),
+    ("Tilt_Right", "Tilt right (°)", "num1"),
+    ("Tilt_Left", "Tilt left (°)", "num1"),
+]
+
+
+def history_pdf(title, patient_name, patient_id, df, columns):
+    """Build a clean, printable PDF table of a patient's history. Returns bytes."""
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    navy, teal, ink = colors.HexColor("#153A5B"), colors.HexColor("#167D9A"), colors.HexColor("#263445")
+    page = landscape(A4)
+    margin = 14 * mm
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Title"], textColor=navy, fontSize=20, alignment=0, spaceAfter=4)
+    info = ParagraphStyle("info", parent=styles["Normal"], fontSize=10, textColor=ink, leading=14)
+    cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=8.5, leading=10.5, textColor=ink)
+    head = ParagraphStyle("head", parent=cell, textColor=colors.white, fontName="Helvetica-Bold")
+
+    def latin_only(text):
+        return text if text and all(ord(ch) < 256 for ch in text) else None
+
+    def fmt(value, kind):
+        if value is None or pd.isna(value):
+            return "-"
+        if kind == "date":
+            return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M")
+        if kind == "num1":
+            return f"{float(value):.1f}"
+        if kind == "num2":
+            return f"{float(value):.2f}"
+        return escape(str(value))
+
+    cols = [c for c in columns if c[0] in df.columns]
+    weights = [1.5 if k == "date" else 2.0 if k == "text" else 1.0 for _, _, k in cols]
+    usable = page[0] - 2 * margin
+    widths = [usable * w / sum(weights) for w in weights]
+
+    data = [[Paragraph(escape(h), head) for _, h, _ in cols]]
+    for _, row in df.iterrows():
+        data.append([Paragraph(fmt(row[c], k), cell) for c, _, k in cols])
+
+    table = Table(data, colWidths=widths, repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), navy),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F7FB")]),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#DCE5EF")),
+                ("LINEBELOW", (0, 0), (-1, 0), 1.2, teal),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+
+    shown_name = latin_only(patient_name)
+    who = f"{escape(shown_name)} (ID: {escape(str(patient_id))})" if shown_name else f"ID: {escape(str(patient_id))}"
+    story = [
+        Paragraph(escape(title), h1),
+        Paragraph(f"<b>Patient:</b> {who}", info),
+        Paragraph(
+            f"<b>Records:</b> {len(df)} &nbsp;&nbsp; <b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            info,
+        ),
+        Spacer(1, 8 * mm),
+        table,
+    ]
+
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#5B6B7C"))
+        canvas.drawString(margin, 8 * mm, "VOICEGUARD AI - exploratory monitoring data. Not a medical diagnosis.")
+        canvas.drawRightString(page[0] - margin, 8 * mm, f"Page {doc.page}")
+        canvas.restoreState()
+
+    buf = io.BytesIO()
+    SimpleDocTemplate(
+        buf, pagesize=page, leftMargin=margin, rightMargin=margin, topMargin=margin,
+        bottomMargin=16 * mm, title=title,
+    ).build(story, onFirstPage=footer, onLaterPages=footer)
+    return buf.getvalue()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _metered_ice_servers(app_name, api_key):
+    r = requests.get(
+        f"https://{app_name}.metered.live/api/v1/turn/credentials",
+        params={"apiKey": api_key},
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def get_rtc_configuration():
-    """STUN servers by default. If the app has a [turn] secret, a TURN relay is added too
-    (helps the camera connect on networks that block direct connections)."""
+    """STUN servers by default, plus a TURN relay when one is configured in the app secrets
+    ([metered] or [turn]). A TURN relay fixes 'Connection is taking longer than expected'."""
     servers = [
         {"urls": ["stun:stun.l.google.com:19302"]},
         {"urls": ["stun:stun1.l.google.com:19302"]},
     ]
-    try:
+    try:  # Option 1: Metered.ca free TURN (credentials fetched automatically)
+        m = dict(st.secrets["metered"])
+        if m.get("app") and m.get("api_key"):
+            servers.extend(_metered_ice_servers(m["app"].strip(), m["api_key"].strip()))
+    except Exception:
+        pass
+    try:  # Option 2: any TURN server entered by hand
         turn = dict(st.secrets["turn"])
         urls = turn.get("urls")
         if isinstance(urls, str):
@@ -879,6 +1010,12 @@ st.markdown(
     }
     .stButton button { background-color: #167D9A; color: white !important;
         border-radius: 8px; border: none; }
+    .stApp .stDownloadButton button, .stApp [data-testid="stDownloadButton"] button {
+        background-color: #167D9A; color: white !important; border-radius: 8px; border: none; }
+    .stApp .stButton button p, .stApp .stButton button span,
+    .stApp .stDownloadButton button p, .stApp .stDownloadButton button span,
+    .stApp [data-testid="stDownloadButton"] button p,
+    .stApp [data-testid="stDownloadButton"] button span { color: white !important; }
     [data-testid="stAlert"] { border-radius: 10px; }
     </style>
     """,
@@ -1140,6 +1277,14 @@ elif page == "Neck Movement":
         swap_lr = st.checkbox("Swap left/right (use if turning RIGHT shows as LEFT)")
         swap_fe = st.checkbox("Swap flexion/extension (use if looking DOWN shows as extension)")
 
+    rtc_cfg = get_rtc_configuration()
+    has_turn = any("username" in s for s in rtc_cfg["iceServers"])
+    if not has_turn:
+        st.caption(
+            "Camera relay (TURN) is not set up. If the video stays on 'Connection is taking longer "
+            "than expected', the app owner needs to add a TURN server in the app Secrets."
+        )
+
     ctx = webrtc_streamer(
         key="neck_movement",
         video_processor_factory=NeckMovementProcessor,
@@ -1152,7 +1297,7 @@ elif page == "Neck Movement":
             },
             "audio": False,
         },
-        rtc_configuration=get_rtc_configuration(),
+        rtc_configuration=rtc_cfg,
         async_processing=True,
         video_html_attrs={
             "style": {"width": "100%", "transform": "scaleX(-1)"},  # selfie (mirrored) view
@@ -1340,6 +1485,24 @@ elif page == "Recovery Progress":
             "Tip: on the free cloud server saved data can be erased when the app restarts. "
             "Download your data to keep a copy."
         )
+        if HAS_REPORTLAB:
+            p1, p2 = st.columns(2)
+            if not voice.empty:
+                p1.download_button(
+                    "Download voice history (PDF)",
+                    history_pdf("Voice History", patient_name, patient_id, voice, VOICE_PDF_COLUMNS),
+                    file_name=f"voice_history_{patient_id}.pdf",
+                    mime="application/pdf",
+                )
+            if not neck.empty:
+                p2.download_button(
+                    "Download neck history (PDF)",
+                    history_pdf("Neck Movement History", patient_name, patient_id, neck, NECK_PDF_COLUMNS),
+                    file_name=f"neck_history_{patient_id}.pdf",
+                    mime="application/pdf",
+                )
+        else:
+            st.info("PDF export needs the 'reportlab' package (add it to requirements.txt).")
         d1, d2 = st.columns(2)
         if not voice.empty:
             d1.download_button(
