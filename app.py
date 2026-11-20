@@ -1897,7 +1897,11 @@ if is_ar():
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
-        .stApp, [data-testid="stSidebar"], [data-testid="stSidebarContent"] { direction: rtl; text-align: right; }
+        /* Right-to-left only for the CONTENT. The page and sidebar frames stay left-to-right, because
+           flipping them breaks the sidebar slide/collapse and leaves its text as a vertical strip. */
+        .block-container, [data-testid="stMainBlockContainer"], [data-testid="block-container"],
+        [data-testid="stSidebarUserContent"] { direction: rtl; text-align: right; }
+        [data-testid="stSidebar"][aria-expanded="false"] { visibility: hidden; }
         .stApp p, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp li,
         .stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stMetricLabel"] p,
         .stApp button p, .stApp .stMarkdown {
