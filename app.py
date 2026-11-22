@@ -736,7 +736,7 @@ AR.update({
 # =========================================================
 # CONFIG
 # =========================================================
-st.set_page_config(page_title="VOICEGUARD AI", page_icon="🎙️", layout="wide")
+st.set_page_config(page_title="Thyrocare", page_icon="🦋", layout="wide")
 
 VOICE_FILE = "voice_history.csv"
 NECK_FILE = "neck_history.csv"
@@ -1872,7 +1872,7 @@ def history_pdf(title, patient_name, patient_id, df, columns, who_line=True):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#5B6B7C"))
-        canvas.drawString(margin, 8 * mm, "VOICEGUARD AI - exploratory monitoring data. Not a medical diagnosis.")
+        canvas.drawString(margin, 8 * mm, "Thyrocare - exploratory monitoring data. Not a medical diagnosis.")
         canvas.drawRightString(page[0] - margin, 8 * mm, f"Page {doc.page}")
         canvas.restoreState()
 
@@ -2051,7 +2051,7 @@ def report_pdf(patient_name, patient_id, findings, notes, voice_profiles, neck_p
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#5B6B7C"))
-        canvas.drawString(margin, 8 * mm, "VOICEGUARD AI")
+        canvas.drawString(margin, 8 * mm, "Thyrocare")
         canvas.drawRightString(A4[0] - margin, 8 * mm, f"Page {doc.page}")
         canvas.restoreState()
 
@@ -2681,7 +2681,7 @@ def _ics_join(lines):
 
 def meds_ics(meds, now):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//VOICEGUARD AI//Medication reminders//EN", "CALSCALE:GREGORIAN"]
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Thyrocare//Medication reminders//EN", "CALSCALE:GREGORIAN"]
     for _, m in meds.iterrows():
         start = max(to_date(m.get("Start")) or now.date(), now.date())
         end = to_date(m.get("End"))
@@ -2693,7 +2693,7 @@ def meds_ics(meds, now):
             rule = f"RRULE:FREQ=DAILY;UNTIL={end:%Y%m%d}T235959" if end else "RRULE:FREQ=DAILY;COUNT=90"
             label = f"Take {m['Name']} {txt(m.get('Dose'))}".strip()
             lines += [
-                "BEGIN:VEVENT", f"UID:{m['Med_ID']}-{h:02d}{mi:02d}@voiceguard.ai", f"DTSTAMP:{stamp}",
+                "BEGIN:VEVENT", f"UID:{m['Med_ID']}-{h:02d}{mi:02d}@thyrocare.app", f"DTSTAMP:{stamp}",
                 f"DTSTART:{first:%Y%m%dT%H%M%S}", f"DTEND:{first + timedelta(minutes=10):%Y%m%dT%H%M%S}", rule,
                 f"SUMMARY:{_ics_escape(label)}", f"DESCRIPTION:{_ics_escape(txt(m.get('Notes')))}",
                 "BEGIN:VALARM", "TRIGGER:PT0M", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_escape(label)}", "END:VALARM",
@@ -2708,8 +2708,8 @@ def appt_ics(row):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     title = txt(row.get("Title")) or txt(row.get("Type"))
     lines = [
-        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//VOICEGUARD AI//Appointments//EN", "CALSCALE:GREGORIAN",
-        "BEGIN:VEVENT", f"UID:{row['Appt_ID']}@voiceguard.ai", f"DTSTAMP:{stamp}",
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Thyrocare//Appointments//EN", "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT", f"UID:{row['Appt_ID']}@thyrocare.app", f"DTSTAMP:{stamp}",
         f"DTSTART:{when:%Y%m%dT%H%M%S}", f"DTEND:{when + timedelta(hours=1):%Y%m%dT%H%M%S}",
         f"SUMMARY:{_ics_escape(title)}", f"LOCATION:{_ics_escape(txt(row.get('Place')))}",
         f"DESCRIPTION:{_ics_escape(txt(row.get('Notes')))}",
@@ -3910,7 +3910,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
             st.download_button(
                 t("Download full report (PDF)"),
                 report_pdf(name, pid, f_en, n_en, vp, npf, ml_en, ex, report_extras(sl, include_notes=True)),
-                file_name=f"voiceguard_full_report_{pid}.pdf", mime="application/pdf", key=f"full_pdf_{pid}")
+                file_name=f"thyrocare_full_report_{pid}.pdf", mime="application/pdf", key=f"full_pdf_{pid}")
         else:
             st.info(t("PDF export needs the 'reportlab' package (add it to requirements.txt)."))
 
@@ -4077,7 +4077,7 @@ if is_ar():
         unsafe_allow_html=True,
     )
 
-st.title(t("🎙️ VOICEGUARD AI"))
+st.title(t("🦋 Thyrocare"))
 st.caption(t("AI-Powered Post-Thyroidectomy Recovery Monitoring (exploratory prototype)"))
 st.divider()
 
@@ -4671,7 +4671,7 @@ elif page == "AI Analysis":
                 t("Download report (PDF)"),
                 report_pdf(patient_name, patient_id, findings_en, notes_en, voice_profiles, neck_profile,
                            ml_note_en, exercise_data, extras_ai),
-                file_name=f"voiceguard_report_{patient_id}.pdf",
+                file_name=f"thyrocare_report_{patient_id}.pdf",
                 mime="application/pdf",
             )
         else:
