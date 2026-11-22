@@ -1,4 +1,4 @@
-"""VOICEGUARD AI - optional Telegram reminder worker.
+"""Thyrocare - optional Telegram reminder worker.
 
 Runs outside the Streamlit app (for example from GitHub Actions every 10 minutes). It reads the
 patients' medicines and appointments from the Supabase database and sends a Telegram message when a
@@ -51,12 +51,12 @@ def latest(rows, *keys):
 
 MESSAGES = {
     "en": {
-        "dose": "💊 Time to take {name} {dose} (scheduled {time}). Open VOICEGUARD AI to mark it as taken.",
+        "dose": "💊 Time to take {name} {dose} (scheduled {time}). Open Thyrocare to mark it as taken.",
         "appt24": "📅 Reminder: {title} tomorrow at {time}.",
         "appt2": "📅 Reminder: {title} today at {time}.",
     },
     "ar": {
-        "dose": "💊 حان وقت تناول {name} {dose} (الموعد {time}). افتح VOICEGUARD AI لتسجيل أنك تناولته.",
+        "dose": "💊 حان وقت تناول {name} {dose} (الموعد {time}). افتح Thyrocare لتسجيل أنك تناولته.",
         "appt24": "📅 تذكير: {title} غدًا الساعة {time}.",
         "appt2": "📅 تذكير: {title} اليوم الساعة {time}.",
     },
