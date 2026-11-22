@@ -733,6 +733,21 @@ AR.update({
 })
 
 
+AR.update({
+    'Neck Assessment': 'تقييم الرقبة',
+    'Share my reports with my clinician': 'مشاركة تقاريري مع طبيبي',
+    'Your clinician can see your reports, check-ins, medicines, appointments and scar photos only while this is on.': 'يستطيع طبيبك رؤية تقاريرك وفحوصاتك اليومية وأدويتك ومواعيدك وصور الندبة فقط عندما يكون هذا الخيار مفعّلًا.',
+    "Your clinician cannot see your reports yet. Turn on 'Share my reports with my clinician' in the sidebar.": 'لا يستطيع طبيبك رؤية تقاريرك بعد. فعّل «مشاركة تقاريري مع طبيبي» من الشريط الجانبي.',
+    'Takes one minute. Your clinician can see your answers if you turned on sharing in the sidebar.': 'يستغرق دقيقة واحدة. يستطيع طبيبك رؤية إجاباتك إذا فعّلت المشاركة من الشريط الجانبي.',
+    'Your answers or photo suggest your care team should look at this. Tell your clinic or mention it at your next visit.': 'تشير إجاباتك أو صورتك إلى أن فريق رعايتك يجب أن يطّلع على هذا. أخبر عيادتك أو اذكر ذلك في زيارتك القادمة.',
+    "No patients are sharing their reports with you yet. Patients turn this on with 'Share my reports with my clinician' in their sidebar.": 'لا يشارك أي مريض تقاريره معك بعد. يفعّل المرضى ذلك من خيار «مشاركة تقاريري مع طبيبي» في الشريط الجانبي.',
+    'You see only patients who chose to share their reports with you.': 'ترى فقط المرضى الذين اختاروا مشاركة تقاريرهم معك.',
+    '**Findings**': '**الملاحظات**',
+    '**Exercise activity (last 7 days)**': '**ممارسة التمارين (آخر 7 أيام)**',
+    'No reports yet. They appear here as the patient uses the app.': 'لا توجد تقارير بعد. ستظهر هنا عندما يستخدم المريض التطبيق.',
+})
+
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -2895,15 +2910,6 @@ def save_consent(pid, yes):
                             "Consent": "yes" if yes else "no"})
 
 
-def send_message(pid, sender, sender_name, text):
-    save_row(MSG_FILE, {"Patient_ID": pid, "Date": now_local().strftime("%Y-%m-%d %H:%M:%S"), "Msg_ID": new_id(),
-                        "Sender": sender, "Sender_Name": sender_name, "Text": text})
-
-
-def awaiting_reply(msg_df):
-    return msg_df is not None and not msg_df.empty and msg_df.sort_values("Date").iloc[-1]["Sender"] == "patient"
-
-
 def add_clinician_note(pid, author, text):
     save_row(NOTE_FILE, {"Patient_ID": pid, "Date": now_local().strftime("%Y-%m-%d %H:%M:%S"),
                          "Note_ID": new_id(), "Author": author, "Text": text})
@@ -2951,10 +2957,6 @@ def patient_overview(pid, name, fr, now, lang=None):
     if adh["pct"] is not None and adh["scheduled"] >= 4 and adh["pct"] < 70:
         bump("review")
         reasons.append(tt("Medication adherence {p}% in the last 7 days.", p=adh["pct"]))
-    waiting = awaiting_reply(sl["msg"])
-    if waiting:
-        bump("review")
-        reasons.append(tt("Message waiting for a reply."))
     appts = latest_by(sl["appt"], "Appt_ID")
     next_appt = "-"
     if appts is not None and not appts.empty:
@@ -2972,13 +2974,10 @@ def patient_overview(pid, name, fr, now, lang=None):
     if not has_data and status == "stable":
         status = "nodata"
     stamps = [sl[k]["Date"].max() for k in ("voice", "neck", "exercise", "medlog", "scar", "symptom", "qol", "rx") if not sl[k].empty]
-    msgs_p = sl["msg"][sl["msg"]["Sender"] == "patient"] if not sl["msg"].empty else pd.DataFrame()
-    if not msgs_p.empty:
-        stamps.append(msgs_p["Date"].max())
     return {
         "Patient_ID": pid, "Name": name, "Status": status, "Reasons": reasons,
         "Last activity": max(stamps) if stamps else None,
-        "Adherence": adh["pct"], "Sets7": sets7, "Next appointment": next_appt, "Scar": scar_label, "Awaiting": waiting,
+        "Adherence": adh["pct"], "Sets7": sets7, "Next appointment": next_appt, "Scar": scar_label,
     }
 
 
@@ -3005,7 +3004,7 @@ def clinic_profiles(profile_df, demo):
 
 FRAME_FILES = {
     "voice": VOICE_FILE, "neck": NECK_FILE, "exercise": EXERCISE_FILE, "med": MED_FILE, "medlog": MEDLOG_FILE,
-    "appt": APPT_FILE, "scar": SCAR_FILE, "symptom": SYMPTOM_FILE, "qol": QOL_FILE, "msg": MSG_FILE,
+    "appt": APPT_FILE, "scar": SCAR_FILE, "symptom": SYMPTOM_FILE, "qol": QOL_FILE,
     "note": NOTE_FILE, "profile": PROFILE_FILE, "rx": RX_FILE,
 }
 
@@ -3146,8 +3145,6 @@ def seed_extras(pid, scenario):
     for inst, score in zip(("Voice", "Neck"), qs):
         save_row(QOL_FILE, {"Patient_ID": pid, "Date": stamp(now - timedelta(days=3)), "Instrument": inst, "Score": score,
                             "Max": 24, "Answers": ""})
-    if scenario in ("review", "urgent"):
-        send_message(pid, "patient", pid, "My voice gets tired quickly in the evening. Is this normal?")
 
 
 
@@ -3194,7 +3191,7 @@ def page_checkin(pid):
     tab_today, tab_qol, tab_hist = st.tabs([t("Today's check-in"), t("Quality of life"), t("History")])
 
     with tab_today:
-        st.caption(t("Takes one minute. Your care team can see your answers if you shared your data (see Care Team)."))
+        st.caption(t("Takes one minute. Your clinician can see your answers if you turned on sharing in the sidebar."))
         if not sym.empty and sym.iloc[-1]["Date"].date() == now.date():
             st.info(t("You already did a check-in today. You can add another one if something changed."))
         with st.form("checkin_form"):
@@ -3527,7 +3524,7 @@ def show_scar_concern(concern):
     if concern == "urgent":
         st.error(t("🚨 Please contact your clinic or surgeon today about your scar. Do not wait for your next appointment."))
     elif concern == "review":
-        st.warning(t("Your answers or photo suggest your care team should look at this. Send them a message or mention it at your next visit."))
+        st.warning(t("Your answers or photo suggest your care team should look at this. Tell your clinic or mention it at your next visit."))
     else:
         st.success(t("Nothing worrying was reported. Keep taking a photo about once a week."))
 
@@ -3619,40 +3616,6 @@ def page_scar(pid):
                     show_photo(scar.iloc[labels.index(a)].get("Image"), caption=a)
                 with cb:
                     show_photo(scar.iloc[labels.index(b)].get("Image"), caption=b)
-
-
-def page_care(pid, name):
-    st.header(t("💬 Care Team"))
-    consent = get_consent(pid)
-    on = st.toggle(t("Share my data with my care team"), value=(consent == "yes"), key="consent_toggle")
-    if on != (consent == "yes"):
-        save_consent(pid, on)
-        st.rerun()
-    if on:
-        st.success(t("Your clinician can see your assessments, check-ins, medicines, appointments, scar photos and messages. You can turn this off at any time."))
-    else:
-        st.info(t("Your data is private. Turn sharing on so your clinician can follow your progress and read your messages."))
-    st.divider()
-    msgs = load_history(MSG_FILE, pid)
-    if msgs.empty:
-        st.caption(t("No messages yet."))
-    for _, m in msgs.iterrows():
-        who = "user" if m["Sender"] == "patient" else "assistant"
-        with st.chat_message(who):
-            st.markdown(f"**{t('You') if m['Sender'] == 'patient' else txt(m.get('Sender_Name')) or t('Care team')}**  ·  {m['Date']:%Y-%m-%d %H:%M}")
-            st.write(txt(m.get("Text")))
-    with st.form("msg_form", clear_on_submit=True):
-        text = st.text_area(t("Write a message to your care team"), max_chars=800, key="msg_text")
-        send = st.form_submit_button(t("Send"))
-    if send:
-        if not text.strip():
-            st.error(t("Please write a message first."))
-        elif not on:
-            st.warning(t("Turn on sharing first, so your clinician can read your messages."))
-        else:
-            send_message(pid, "patient", name, text.strip())
-            st.rerun()
-    st.caption(t("Messages are not for emergencies. If you have trouble breathing, noisy breathing, fast swelling or severe swallowing problems, get urgent medical care."))
 
 
 LEARN_TOPICS = [
@@ -3754,10 +3717,10 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
     sl = {k: slice_pid(v, pid) for k, v in fr.items()}
     st.subheader(f"{name}  ·  {pid}")
     st.markdown(f"**{status_text(ov['Status'])}**")
-    tabs = st.tabs([t("Summary"), t("Voice and neck"), t("Check-ins"), t("Scar photos"), t("Medicines"),
-                    t("Appointments"), t("Exercise"), t("Messages and notes"), t("Report")])
+    tabs = st.tabs([t("Report"), t("Summary"), t("Voice and neck"), t("Check-ins"), t("Scar photos"), t("Medicines"),
+                    t("Appointments"), t("Exercise"), t("Notes")])
 
-    with tabs[0]:
+    with tabs[1]:
         if ov["Reasons"]:
             for r in ov["Reasons"]:
                 st.warning(r)
@@ -3777,7 +3740,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
         for f in findings:
             st.write("• " + f)
 
-    with tabs[1]:
+    with tabs[2]:
         vp, npf = get_profiles(pid, voice=sl["voice"], neck=sl["neck"])
         if not vp and npf.empty:
             st.info(t("No voice or neck assessments yet."))
@@ -3797,7 +3760,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
             cols = [c for c in ("Flexion", "Extension", "Right_Rotation", "Left_Rotation") if c in sl["neck"].columns]
             st.line_chart(sl["neck"].set_index("Date")[cols])
 
-    with tabs[2]:
+    with tabs[3]:
         sym, qol = sl["symptom"], sl["qol"]
         if sym.empty and qol.empty:
             st.info(t("No check-ins yet."))
@@ -3812,7 +3775,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
             st.markdown(t("**Quality of life scores**"))
             st.line_chart(qol.pivot_table(index="Date", columns="Instrument", values="Score"))
 
-    with tabs[3]:
+    with tabs[4]:
         scar = sl["scar"]
         if scar.empty:
             st.info(t("No scar photos yet."))
@@ -3832,7 +3795,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
                 if txt(r.get("Notes")):
                     st.write(t("Patient note: {x}", x=txt(r.get("Notes"))))
 
-    with tabs[4]:
+    with tabs[5]:
         meds = active_meds(sl["med"])
         if meds.empty:
             st.info(t("No medicines entered yet."))
@@ -3852,7 +3815,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
                     st.caption(f"{r['Date']:%Y-%m-%d}  {txt(r.get('Medicines'))}")
                     show_photo(r.get("Image"), width=260)
 
-    with tabs[5]:
+    with tabs[6]:
         appts = latest_by(sl["appt"], "Appt_ID")
         if appts is None or appts.empty:
             st.info(t("No appointments or tests yet."))
@@ -3864,7 +3827,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
             st.dataframe(a[["When", "Type", "Title", "Place", "Status", "Result"]].sort_values("When", ascending=False)
                          .rename(columns=lambda c: t(c)), use_container_width=True, hide_index=True)
 
-    with tabs[6]:
+    with tabs[7]:
         summ = exercise_summary(sl["exercise"])
         if summ.empty:
             st.info(t("No exercise sets yet."))
@@ -3876,20 +3839,7 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
             st.dataframe(view, use_container_width=True, hide_index=True)
             st.bar_chart(summ.groupby("Date")["Sets"].sum())
 
-    with tabs[7]:
-        msgs = sl["msg"]
-        if msgs.empty:
-            st.caption(t("No messages yet."))
-        for _, m in msgs.iterrows():
-            with st.chat_message("user" if m["Sender"] == "patient" else "assistant"):
-                st.markdown(f"**{txt(m.get('Sender_Name')) or m['Sender']}**  ·  {m['Date']:%Y-%m-%d %H:%M}")
-                st.write(txt(m.get("Text")))
-        with st.form(f"reply_{pid}", clear_on_submit=True):
-            reply = st.text_area(t("Reply to the patient"), max_chars=800, key=f"reply_text_{pid}")
-            send = st.form_submit_button(t("Send reply"))
-        if send and reply.strip():
-            send_message(pid, "clinician", cname, reply.strip())
-            st.rerun()
+    with tabs[8]:
         st.markdown(t("**Private clinician notes** (the patient cannot see these)"))
         for _, n in sl["note"].iloc[::-1].iterrows():
             st.caption(f"{n['Date']:%Y-%m-%d %H:%M} · {txt(n.get('Author'))}")
@@ -3901,15 +3851,47 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
             add_clinician_note(pid, cname, note.strip())
             st.rerun()
 
-    with tabs[8]:
-        st.write(t("A complete report for this patient: assessments, check-ins, medicines, appointments, scar checks, exercise and your private notes."))
+    with tabs[0]:
+        st.markdown(f"**{status_text(ov['Status'])}**")
+        for r in ov["Reasons"]:
+            st.warning(r)
+        findings, notes_l, ml_l = compute_findings(pid, voice=sl["voice"], neck=sl["neck"])
+        if findings:
+            st.markdown(t("**Findings**"))
+            for f in findings:
+                st.write("• " + f)
+        for n_ in notes_l:
+            st.caption(n_)
+        vp, npf = get_profiles(pid, voice=sl["voice"], neck=sl["neck"])
+        for test, prof in vp.items():
+            st.markdown(t("**Voice: {test}**", test=t(test)))
+            show_table(prof)
+        if not npf.empty:
+            st.markdown(t("**Neck movement** (baseline = first assessment)"))
+            show_table(npf)
+        ex = exercise_report_data(pid, df=sl["exercise"])
+        if ex is not None:
+            st.markdown(t("**Exercise activity (last 7 days)**"))
+            x1, x2, x3 = st.columns(3)
+            x1.metric(t("Days with exercise"), f"{ex['active_days']} / {ex['days']}")
+            x2.metric(t("Total sets"), ex["sets"])
+            x3.metric(t("Total repetitions"), ex["reps"])
+        extras = report_extras(sl, include_notes=True)
+        for sec in extras:  # medicines, check-ins, appointments, scar checks, questionnaires, notes
+            st.markdown(f"**{sec['title']}**")
+            if sec.get("text"):
+                st.write(sec["text"])
+            if sec.get("rows"):
+                st.dataframe(pd.DataFrame(sec["rows"], columns=sec["headers"]), use_container_width=True, hide_index=True)
+            if sec.get("image"):
+                st.image(sec["image"], caption=sec.get("image_caption"), width=240)
+        if not vp and npf.empty and ex is None and not extras:
+            st.info(t("No reports yet. They appear here as the patient uses the app."))
         if HAS_REPORTLAB:
             f_en, n_en, ml_en = compute_findings(pid, lang="en", voice=sl["voice"], neck=sl["neck"])
-            vp, npf = get_profiles(pid, voice=sl["voice"], neck=sl["neck"])
-            ex = exercise_report_data(pid, df=sl["exercise"])
             st.download_button(
                 t("Download full report (PDF)"),
-                report_pdf(name, pid, f_en, n_en, vp, npf, ml_en, ex, report_extras(sl, include_notes=True)),
+                report_pdf(name, pid, f_en, n_en, vp, npf, ml_en, ex, extras),
                 file_name=f"thyrocare_full_report_{pid}.pdf", mime="application/pdf", key=f"full_pdf_{pid}")
         else:
             st.info(t("PDF export needs the 'reportlab' package (add it to requirements.txt)."))
@@ -3918,45 +3900,26 @@ def clinician_patient_view(pid, name, fr, ov, cid, cname, now):
 def clinician_workspace(cid, cname):
     now = now_local()
     demo = cid == "DR-DEMO"
-    menu = st.sidebar.radio(t("MAIN MENU"), ["Patients", "Inbox"], format_func=t, key="clin_menu")
     st.sidebar.divider()
-    st.sidebar.caption(t("You see only patients who chose to share their data with their care team."))
+    st.sidebar.caption(t("You see only patients who chose to share their reports with you."))
     fr = load_frames()
     prof = clinic_profiles(fr["profile"], demo)
     if demo:
         st.info(t("Clinician demo: every patient shown here is simulated."))
     if prof.empty:
         st.header(t("🩺 Patients"))
-        st.info(t("No patients are sharing their data with you yet. Patients turn this on in their 'Care Team' page."))
+        st.info(t("No patients are sharing their reports with you yet. Patients turn this on with 'Share my reports with my clinician' in their sidebar."))
         return
     ov = [patient_overview(r["Patient_ID"], r["Name"], fr, now) for _, r in prof.iterrows()]
     ov.sort(key=lambda o: (PRIORITY[o["Status"]], -(o["Last activity"].timestamp() if o["Last activity"] is not None else 0)))
     by_id = {o["Patient_ID"]: o for o in ov}
-
-    if menu == "Inbox":
-        st.header(t("📥 Inbox"))
-        waiting = [o for o in ov if o["Awaiting"]]
-        if not waiting:
-            st.success(t("No messages are waiting for a reply."))
-        for o in waiting:
-            msgs = slice_pid(fr["msg"], o["Patient_ID"])
-            last = msgs.sort_values("Date").iloc[-1]
-            with st.expander(f"{status_text(o['Status'])}  {o['Name']}  ·  {last['Date']:%Y-%m-%d %H:%M}", expanded=True):
-                st.write(txt(last.get("Text")))
-                with st.form(f"inbox_{o['Patient_ID']}", clear_on_submit=True):
-                    reply = st.text_area(t("Reply to the patient"), max_chars=800, key=f"inbox_text_{o['Patient_ID']}")
-                    send = st.form_submit_button(t("Send reply"))
-                if send and reply.strip():
-                    send_message(o["Patient_ID"], "clinician", cname, reply.strip())
-                    st.rerun()
-        return
 
     st.header(t("🩺 Patients"))
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(t("Patients"), len(ov))
     c2.metric(t("Urgent"), sum(o["Status"] == "urgent" for o in ov))
     c3.metric(t("Need review"), sum(o["Status"] == "review" for o in ov))
-    c4.metric(t("Messages waiting"), sum(bool(o["Awaiting"]) for o in ov))
+    c4.metric(t("Stable"), sum(o["Status"] == "stable" for o in ov))
     f1, f2 = st.columns([2, 3])
     query = f1.text_input(t("Search by name or ID"), key="clin_search").strip().lower()
     shown_status = f2.multiselect(t("Show"), list(PRIORITY), default=list(PRIORITY),
@@ -4220,19 +4183,29 @@ page = st.sidebar.radio(
     [
         "Dashboard",
         "Daily Check-in",
-        "Medications",
-        "Appointments & Tests",
-        "Scar Photos",
+        "Neck Assessment",
         "Voice Assessment",
-        "Neck Movement",
-        "Exercise Library",
+        "Scar Photos",
         "AI Analysis",
         "Recovery Progress",
-        "Care Team",
+        "Exercise Library",
+        "Medications",
+        "Appointments & Tests",
         "Learn",
     ],
     format_func=t,
 )
+
+if not patient_id.startswith("DEMO"):
+    _shared = get_consent(patient_id) == "yes"
+    _share_on = st.sidebar.toggle(t("Share my reports with my clinician"), value=_shared, key="share_toggle")
+    if _share_on != _shared:
+        try:
+            save_consent(patient_id, _share_on)
+        except Exception:
+            pass
+        st.rerun()
+    st.sidebar.caption(t("Your clinician can see your reports, check-ins, medicines, appointments and scar photos only while this is on."))
 
 st.sidebar.divider()
 st.sidebar.caption(
@@ -4289,6 +4262,8 @@ if page == "Dashboard":
         st.write("  ".join(f"{emoji} {t(label)}" for emoji, label in badge_list))
     if not checked_today:
         st.info(t("You have not done today's check-in yet. Open 'Daily Check-in' (it takes one minute)."))
+    if not patient_id.startswith("DEMO") and get_consent(patient_id) != "yes":
+        st.info(t("Your clinician cannot see your reports yet. Turn on 'Share my reports with my clinician' in the sidebar."))
     if findings:
         st.warning(t("Changes were detected. Open 'AI Analysis' for details."))
     else:
@@ -4384,7 +4359,7 @@ elif page == "Voice Assessment":
 # =========================================================
 # NECK MOVEMENT
 # =========================================================
-elif page == "Neck Movement":
+elif page == "Neck Assessment":
     st.header(t("📷 Neck Movement Assessment"))
     st.info(
         t(("Only do these movements if your surgeon/physiotherapist has cleared them. "
@@ -4872,9 +4847,6 @@ elif page == "Appointments & Tests":
 
 elif page == "Scar Photos":
     page_scar(patient_id)
-
-elif page == "Care Team":
-    page_care(patient_id, patient_name)
 
 elif page == "Learn":
     page_learn()
