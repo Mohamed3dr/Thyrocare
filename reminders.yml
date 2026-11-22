@@ -1,0 +1,21 @@
+name: Medication and appointment reminders (Telegram)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # about every 10 minutes (GitHub may delay it a little)
+  workflow_dispatch:          # lets you run it by hand from the Actions tab
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests tzdata
+      - run: python reminder_worker.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
