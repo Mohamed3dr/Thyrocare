@@ -45,6 +45,8 @@ try:
 except Exception:
     LOCAL_TZ = None
 
+APP_VERSION = "2026-11-23 menu update"
+
 
 def now_local():
     """Current time in Cairo (falls back to server time if timezone data is missing)."""
@@ -3902,6 +3904,7 @@ def clinician_workspace(cid, cname):
     demo = cid == "DR-DEMO"
     st.sidebar.divider()
     st.sidebar.caption(t("You see only patients who chose to share their reports with you."))
+    st.sidebar.caption(f"Thyrocare · version {APP_VERSION}")
     fr = load_frames()
     prof = clinic_profiles(fr["profile"], demo)
     if demo:
@@ -4206,6 +4209,7 @@ if not patient_id.startswith("DEMO"):
             pass
         st.rerun()
     st.sidebar.caption(t("Your clinician can see your reports, check-ins, medicines, appointments and scar photos only while this is on."))
+st.sidebar.caption(f"Thyrocare · version {APP_VERSION}")
 
 st.sidebar.divider()
 st.sidebar.caption(
