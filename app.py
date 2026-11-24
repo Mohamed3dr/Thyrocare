@@ -7,6 +7,7 @@ import math
 import os
 import re
 import secrets as pysecrets
+import tempfile
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
 import cv2
@@ -45,7 +46,7 @@ try:
 except Exception:
     LOCAL_TZ = None
 
-APP_VERSION = "2026-11-27 iphone camera"
+APP_VERSION = "2026-11-28 browser camera"
 
 # Thyrocare app icon (PNG, base64): used for the browser tab and the phone home-screen shortcut
 ICON_192_B64 = "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"
@@ -784,6 +785,22 @@ AR.update({
     'Face tracking problem: {e}': 'مشكلة في تتبع الوجه: {e}',
     'The server has not received any video yet. Allow the camera in your browser and press START below the video.': 'لم يستلم الخادم أي فيديو بعد. اسمح للمتصفح باستخدام الكاميرا واضغط START أسفل الفيديو.',
     "Face tracking cannot start on this server because the 'mediapipe' library is version {v} and has no face-mesh module. In requirements.txt use mediapipe==0.10.14, set Python 3.11 in the app settings, and reboot the app.": "لا يمكن بدء تتبع الوجه على هذا الخادم لأن مكتبة 'mediapipe' إصدارها {v} ولا تحتوي على وحدة face-mesh. في ملف requirements.txt استخدم mediapipe==0.10.14، واختر Python 3.11 من إعدادات التطبيق، ثم أعد تشغيل التطبيق.",
+})
+
+
+AR.update({
+    'Start camera': 'تشغيل الكاميرا',
+    'Loading face tracking (the first time takes a few seconds)...': 'جارٍ تحميل تتبع الوجه (في أول مرة يستغرق بضع ثوانٍ)...',
+    'The camera is starting...': 'جارٍ تشغيل الكاميرا...',
+    'Calibrating: keep your head still ({n}%)': 'جارٍ المعايرة: ثبّت رأسك ({n}%)',
+    'Assessment in progress. Move slowly.': 'التقييم جارٍ. تحرك ببطء.',
+    'Assessment finished. Scroll down to see the results and save them.': 'انتهى التقييم. مرّر للأسفل لرؤية النتائج وحفظها.',
+    'Could not open the camera: {e}': 'تعذر تشغيل الكاميرا: {e}',
+    'Face tracking could not load: {e}. Check your internet connection.': 'تعذر تحميل تتبع الوجه: {e}. تحقق من اتصالك بالإنترنت.',
+    "This camera runs inside your phone's browser, so no video is sent over the internet. The first time, it downloads a small face-tracking model.": 'تعمل هذه الكاميرا داخل متصفح هاتفك، لذلك لا يُرسل أي فيديو عبر الإنترنت. في أول مرة تنزّل نموذجًا صغيرًا لتتبع الوجه.',
+    'The camera does not start? Use the server camera instead (needs a good connection)': 'الكاميرا لا تعمل؟ استخدم كاميرا الخادم بدلًا منها (تحتاج اتصالًا جيدًا)',
+    'The in-browser camera could not be loaded: {e}': 'تعذر تحميل كاميرا المتصفح: {e}',
+    'The server camera can fail on mobile data. Use Wi-Fi, or use the camera above.': 'قد تفشل كاميرا الخادم على بيانات الهاتف. استخدم Wi-Fi أو استخدم الكاميرا بالأعلى.',
 })
 
 
@@ -4117,6 +4134,298 @@ def show_neck_results(pid, assessment_running=False):
 
 
 
+NECK_COMPONENT_HTML = r"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; padding: 0 2px; font-family: -apple-system, "Segoe UI", Roboto, Cairo, sans-serif; color: #263445; background: transparent; }
+  #wrap { position: relative; width: 100%; max-width: 520px; margin: 0 auto; }
+  video { width: 100%; display: block; transform: scaleX(-1); border-radius: 12px; background: #0d1b2a; min-height: 120px; }
+  #status { padding: 10px 12px; border-radius: 10px; background: #E8F1F8; margin: 8px 0; font-size: 15px; line-height: 1.4; }
+  #status.err { background: #FDE8E8; color: #8a1c1c; } #status.ok { background: #E3F5EA; color: #1E6B3A; }
+  .row { display: flex; gap: 8px; margin: 8px 0; }
+  button { flex: 1; padding: 13px 6px; border: 0; border-radius: 10px; background: #167D9A; color: #fff; font-size: 16px; font-weight: 600; }
+  button:disabled { opacity: .4; }
+  button.secondary { background: #5B6B7C; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+  .cell { background: #fff; border: 1px solid #DCE5EF; border-radius: 10px; padding: 8px 4px; text-align: center; }
+  .cell b { display: block; font-size: 20px; color: #153A5B; } .cell span { font-size: 12px; color: #5B6B7C; }
+  #live { font-size: 13px; color: #5B6B7C; margin: 4px 0; direction: ltr; text-align: center; }
+</style>
+</head>
+<body>
+<div id="wrap"><video id="v" playsinline muted autoplay></video></div>
+<div id="status">…</div>
+<div class="row"><button id="bCam">Start camera</button></div>
+<div class="row">
+  <button id="bStart" disabled>Start Assessment</button>
+  <button id="bStop" class="secondary" disabled>Stop Assessment</button>
+  <button id="bRecal" class="secondary" disabled>Recalibrate</button>
+</div>
+<div id="live"></div>
+<div class="grid" id="grid"></div>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+// ==MATH-START==
+const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const norm = a => Math.sqrt(dot(a, a));
+const scl = (a, s) => [a[0]*s, a[1]*s, a[2]*s];
+const P = (lm, i, w, h) => [lm[i].x * w, lm[i].y * h, lm[i].z * w];
+const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
+const DEG = 180 / Math.PI;
+
+// Head rotation (3 axes, as columns) from the 3D face mesh: same maths as the server version
+function headRotation(lm, w, h) {
+  const xr = add(sub(P(lm, 454, w, h), P(lm, 234, w, h)), sub(P(lm, 356, w, h), P(lm, 127, w, h)));
+  const yr = sub(P(lm, 152, w, h), P(lm, 10, w, h));
+  const nx = norm(xr), ny = norm(yr);
+  if (nx < 1e-6 || ny < 1e-6) return null;
+  const x = scl(xr, 1 / nx);
+  let z = cross(x, yr); const nz = norm(z);
+  if (nz < 1e-6) return null;
+  z = scl(z, 1 / nz);
+  const y = cross(z, x);
+  return [x, y, z];
+}
+function rollFromEyes(lm, w, h) {
+  const r = P(lm, 33, w, h), l = P(lm, 263, w, h);
+  return Math.atan2(r[1] - l[1], l[0] - r[0]) * DEG;
+}
+// rel = R * Rn^T  with R[i][j] = cols[j][i]
+function relRotation(cols, nCols) {
+  const rel = [[0,0,0],[0,0,0],[0,0,0]];
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+    let s = 0; for (let k = 0; k < 3; k++) s += cols[k][i] * nCols[k][j];
+    rel[i][j] = s;
+  }
+  return rel;
+}
+function pitchYaw(rel) {
+  const yaw = Math.atan2(rel[0][2], rel[2][2]) * DEG;
+  const pitch = Math.asin(Math.max(-1, Math.min(1, -rel[1][2]))) * DEG;
+  return [pitch, yaw];
+}
+function orthonormal(meanCols) {            // nearest rotation to the average of several poses
+  const x = scl(meanCols[0], 1 / norm(meanCols[0]));
+  let y = sub(meanCols[1], scl(x, dot(meanCols[1], x))); y = scl(y, 1 / norm(y));
+  const z = cross(x, y);
+  return [x, y, z];
+}
+// ==MATH-END==
+
+const $ = id => document.getElementById(id);
+const video = $("v");
+let L = {
+  startCam: "Start camera", start: "Start Assessment", stop: "Stop Assessment", recal: "Recalibrate",
+  loading: "Loading face tracking (the first time takes a few seconds)...", camStarting: "The camera is starting...",
+  noFace: "No face detected. Face the camera in good light, with your whole face visible.",
+  calibrating: "Calibrating: keep your head still ({n}%)", ready: "Neutral position calibrated. You can start the assessment.",
+  active: "Assessment in progress. Move slowly.", done: "Assessment finished. Scroll down to see the results and save them.",
+  camError: "Could not open the camera: {e}", loadError: "Face tracking could not load: {e}",
+  live: "Face detected: {face} | live: pitch {pitch}°, yaw {yaw}°, roll {roll}°", yes: "yes", no: "NO",
+  flexion: "Flexion", extension: "Extension", right: "Right rotation", left: "Left rotation", tiltR: "Tilt right", tiltL: "Tilt left",
+};
+let swapLR = false, swapFE = false;
+
+function send(type, extra) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra || {}), "*"); }
+function setHeight() { send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight + 6 }); }
+function sendValue(obj) { send("streamlit:setComponentValue", { value: obj, dataType: "json" }); }
+const fmt = (s, o) => s.replace(/\{(\w+)\}/g, (m, k) => (k in o ? o[k] : m));
+
+let landmarker = null, stream = null, running = false;
+let state = "idle", faceVisible = false, calibrated = false, active = false;
+let samples = [], neutral = null, neutralRoll = 0, lastRel = null, skipped = 0, cur = { pitch: 0, yaw: 0, roll: 0 };
+let maxv = { flexion: 0, extension: 0, right: 0, left: 0, tiltR: 0, tiltL: 0 };
+const CAL = 20;
+
+function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = cls || ""; setHeight(); }
+function applyLabels() {
+  $("bCam").textContent = L.startCam; $("bStart").textContent = L.start; $("bStop").textContent = L.stop; $("bRecal").textContent = L.recal;
+  drawGrid();
+}
+function drawGrid() {
+  const cells = [[L.flexion, maxv.flexion], [L.extension, maxv.extension], [L.right, maxv.right],
+                 [L.left, maxv.left], [L.tiltR, maxv.tiltR], [L.tiltL, maxv.tiltL]];
+  $("grid").innerHTML = cells.map(c => "<div class='cell'><b>" + c[1].toFixed(1) + "°</b><span>" + c[0] + "</span></div>").join("");
+  setHeight();
+}
+function buttons() {
+  $("bStart").disabled = !(calibrated && !active);
+  $("bStop").disabled = !active;
+  $("bRecal").disabled = !(running && !active);
+}
+function refreshStatus() {
+  if (state === "idle") return;
+  if (!running) return;
+  if (!faceVisible) { setStatus(L.noFace, "err"); return; }
+  if (!calibrated) { setStatus(fmt(L.calibrating, { n: Math.round(100 * samples.length / CAL) })); return; }
+  if (active) setStatus(L.active, "ok"); else setStatus(state === "done" ? L.done : L.ready, "ok");
+}
+function resetCalibration() { calibrated = false; samples = []; neutral = null; lastRel = null; skipped = 0; buttons(); refreshStatus(); }
+
+function onFrame(res) {
+  if (!res.faceLandmarks || !res.faceLandmarks.length) { faceVisible = false; refreshStatus(); return; }
+  faceVisible = true;
+  const lm = res.faceLandmarks[0], w = video.videoWidth, h = video.videoHeight;
+  const cols = headRotation(lm, w, h); if (!cols) return;
+  const roll = rollFromEyes(lm, w, h);
+  if (!calibrated) {
+    samples.push({ cols, roll });
+    if (samples.length >= CAL) {
+      const mean = [0, 1, 2].map(j => [0, 1, 2].map(i => samples.reduce((a, s) => a + s.cols[j][i], 0) / samples.length));
+      neutral = orthonormal(mean);
+      const rolls = samples.map(s => s.roll).sort((a, b) => a - b); neutralRoll = rolls[Math.floor(rolls.length / 2)];
+      calibrated = true; buttons();
+    }
+    refreshStatus(); return;
+  }
+  let [pitch, yaw] = pitchYaw(relRotation(cols, neutral));
+  let r = wrap180(roll - neutralRoll);
+  if (swapFE) pitch = -pitch;
+  if (swapLR) { yaw = -yaw; r = -r; }
+  if (Math.abs(pitch) > 90 || Math.abs(yaw) > 90 || Math.abs(r) > 90) return;      // impossible values
+  if (lastRel) {                                                                   // ignore one-frame glitches, then smooth
+    const jump = Math.max(Math.abs(pitch - lastRel[0]), Math.abs(yaw - lastRel[1]), Math.abs(r - lastRel[2]));
+    if (jump > 30 && skipped < 10) { skipped++; return; }
+    if (jump > 30) lastRel = [pitch, yaw, r];
+    pitch = 0.6 * pitch + 0.4 * lastRel[0]; yaw = 0.6 * yaw + 0.4 * lastRel[1]; r = 0.6 * r + 0.4 * lastRel[2];
+  }
+  skipped = 0; lastRel = [pitch, yaw, r]; cur = { pitch, yaw, roll: r };
+  if (active) {
+    if (pitch > 0) maxv.flexion = Math.max(maxv.flexion, pitch); else maxv.extension = Math.max(maxv.extension, -pitch);
+    if (yaw > 0) maxv.right = Math.max(maxv.right, yaw); else maxv.left = Math.max(maxv.left, -yaw);
+    if (r > 0) maxv.tiltR = Math.max(maxv.tiltR, r); else maxv.tiltL = Math.max(maxv.tiltL, -r);
+    drawGrid();
+  }
+  $("live").textContent = fmt(L.live, { face: L.yes, pitch: pitch.toFixed(1), yaw: yaw.toFixed(1), roll: r.toFixed(1) });
+  refreshStatus();
+}
+
+let lastRun = 0;
+function loop() {
+  if (!running) return;
+  const now = performance.now();
+  if (now - lastRun >= 66 && video.readyState >= 2 && landmarker) {
+    lastRun = now;
+    try { onFrame(landmarker.detectForVideo(video, now)); } catch (e) { setStatus(fmt(L.loadError, { e: String(e && e.message || e) }), "err"); }
+  }
+  requestAnimationFrame(loop);
+}
+
+async function startCamera() {
+  $("bCam").disabled = true;
+  try {
+    setStatus(L.loading);
+    if (!landmarker) {
+      const fileset = await FilesetResolver.forVisionTasks(WASM);
+      const make = delegate => FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: "VIDEO", numFaces: 1 });
+      try { landmarker = await make("GPU"); } catch (e) { landmarker = await make("CPU"); }
+    }
+  } catch (e) { setStatus(fmt(L.loadError, { e: String(e && e.message || e) }), "err"); $("bCam").disabled = false; return; }
+  try {
+    setStatus(L.camStarting);
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    video.srcObject = stream; video.setAttribute("playsinline", ""); video.muted = true;
+    await video.play();
+  } catch (e) { setStatus(fmt(L.camError, { e: String(e && e.message || e) }), "err"); $("bCam").disabled = false; return; }
+  running = true; state = "ready"; resetCalibration(); requestAnimationFrame(loop);
+}
+
+$("bCam").onclick = startCamera;
+$("bRecal").onclick = () => { state = "ready"; resetCalibration(); };
+$("bStart").onclick = () => {
+  maxv = { flexion: 0, extension: 0, right: 0, left: 0, tiltR: 0, tiltL: 0 }; active = true; state = "active"; drawGrid(); buttons(); refreshStatus();
+  sendValue({ event: "start", id: String(Date.now()) });
+};
+$("bStop").onclick = () => {
+  active = false; state = "done"; buttons(); refreshStatus();
+  sendValue({ event: "stop", id: String(Date.now()), flexion: maxv.flexion, extension: maxv.extension, right: maxv.right,
+             left: maxv.left, tiltR: maxv.tiltR, tiltL: maxv.tiltL });
+};
+
+window.addEventListener("message", ev => {
+  const d = ev.data;
+  if (d && d.type === "streamlit:render") {
+    const a = d.args || {};
+    if (a.labels) L = Object.assign(L, a.labels);
+    swapLR = !!a.swap_lr; swapFE = !!a.swap_fe;
+    document.body.dir = a.rtl ? "rtl" : "ltr";
+    applyLabels(); if (state === "idle") setStatus(L.startCam + " ↓");
+  }
+});
+send("streamlit:componentReady", { apiVersion: 1 });
+applyLabels(); setStatus(L.startCam + " ↓");
+new ResizeObserver(setHeight).observe(document.body);
+</script>
+</body>
+</html>
+"""
+
+
+def neck_browser_tracker(swap_lr, swap_fe):
+    """Face tracking that runs inside the phone's browser (no video is sent to the server).
+    Returns the latest event from the page: {"event": "start"/"stop", ...} or None."""
+    try:
+        folder = os.path.join(tempfile.gettempdir(), "thyrocare_neck_component_v1")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "index.html")
+        if not os.path.exists(path) or open(path, encoding="utf-8").read() != NECK_COMPONENT_HTML:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(NECK_COMPONENT_HTML)
+        component = st.components.v1.declare_component("thyrocare_neck_tracker", path=folder)
+        labels = {
+            "startCam": t("Start camera"), "start": t("Start Assessment"), "stop": t("Stop Assessment"),
+            "recal": t("Recalibrate"),
+            "loading": t("Loading face tracking (the first time takes a few seconds)..."),
+            "camStarting": t("The camera is starting..."),
+            "noFace": t("No face detected. Face the camera in good light, with your whole face visible."),
+            "calibrating": t("Calibrating: keep your head still ({n}%)"),
+            "ready": t("Neutral position calibrated. You can start the assessment."),
+            "active": t("Assessment in progress. Move slowly."),
+            "done": t("Assessment finished. Scroll down to see the results and save them."),
+            "camError": t("Could not open the camera: {e}"),
+            "loadError": t("Face tracking could not load: {e}. Check your internet connection."),
+            "live": t("Face detected: {face} | live: pitch {pitch}°, yaw {yaw}°, roll {roll}°"),
+            "yes": t("yes"), "no": t("NO"),
+            "flexion": t("Flexion"), "extension": t("Extension"), "right": t("Right rotation"),
+            "left": t("Left rotation"), "tiltR": t("Tilt right"), "tiltL": t("Tilt left"),
+        }
+        return component(labels=labels, swap_lr=bool(swap_lr), swap_fe=bool(swap_fe), rtl=is_ar(),
+                         key="neck_browser_tracker", default=None)
+    except Exception as error:
+        st.warning(t("The in-browser camera could not be loaded: {e}", e=error))
+        return None
+
+
+def handle_neck_component_value(val):
+    """Turn the page's start/stop events into the same results the server camera produces."""
+    if not isinstance(val, dict) or not val.get("id") or val["id"] == st.session_state.get("neck_js_id"):
+        return
+    st.session_state["neck_js_id"] = val["id"]
+    if val.get("event") == "start":
+        st.session_state.pop("neck_result", None)
+        st.session_state.pop("neck_saved", None)
+    elif val.get("event") == "stop":
+        st.session_state["neck_result"] = {
+            "time": now_local().strftime("%Y-%m-%d %H:%M:%S"),
+            "Flexion": float(val.get("flexion", 0) or 0), "Extension": float(val.get("extension", 0) or 0),
+            "Right_Rotation": float(val.get("right", 0) or 0), "Left_Rotation": float(val.get("left", 0) or 0),
+            "Tilt_Right": float(val.get("tiltR", 0) or 0), "Tilt_Left": float(val.get("tiltL", 0) or 0),
+            "movement": pd.DataFrame(),
+        }
+        st.session_state["neck_saved"] = False
+
+
 # =========================================================
 # CUSTOM DESIGN
 # =========================================================
@@ -4535,125 +4844,130 @@ elif page == "Neck Assessment":
         st.components.v1.html(_BROWSER_CHECK_JS, height=0)
     except Exception:
         pass
-    if not hasattr(mp, "solutions"):
-        st.error(t("Face tracking cannot start on this server because the 'mediapipe' library is version {v} and has no face-mesh module. In requirements.txt use mediapipe==0.10.14, set Python 3.11 in the app settings, and reboot the app.",
-                   v=getattr(mp, "__version__", "?")))
-        st.stop()
-    rtc_cfg = get_rtc_configuration()
-    has_turn = any("username" in s for s in rtc_cfg["iceServers"])
-    if not has_turn:
-        st.caption(t("Live video can fail on mobile data because the connection needs a relay server (TURN) that is not set up. Use Photo mode, or Wi-Fi."))
+    st.caption(t("This camera runs inside your phone's browser, so no video is sent over the internet. The first time, it downloads a small face-tracking model."))
+    handle_neck_component_value(neck_browser_tracker(swap_lr, swap_fe))
 
-    ctx = webrtc_streamer(
-        key="neck_movement",
-        video_processor_factory=NeckMovementProcessor,
-        media_stream_constraints={
-            "video": {"facingMode": "user", "width": {"ideal": 640}, "height": {"ideal": 480},
-                      "frameRate": {"ideal": 24}},
-            "audio": False,
-        },
-        rtc_configuration=rtc_cfg,
-        async_processing=True,
-        video_html_attrs={
-            "style": {"width": "100%", "transform": "scaleX(-1)"},  # selfie (mirrored) view
-            "controls": False,
-            "autoPlay": True,
-            "muted": True,
-            "playsInline": True,  # required by iPhone Safari, otherwise the camera video never shows
-        },
-    )
+    processor = None
+    with st.expander(t("The camera does not start? Use the server camera instead (needs a good connection)")):
+        if not hasattr(mp, "solutions"):
+            st.error(t("Face tracking cannot start on this server because the 'mediapipe' library is version {v} and has no face-mesh module. In requirements.txt use mediapipe==0.10.14, set Python 3.11 in the app settings, and reboot the app.",
+                       v=getattr(mp, "__version__", "?")))
+        else:
+            rtc_cfg = get_rtc_configuration()
+            has_turn = any("username" in s for s in rtc_cfg["iceServers"])
+            if not has_turn:
+                st.caption(t("The server camera can fail on mobile data. Use Wi-Fi, or use the camera above."))
 
-    playing = bool(ctx.state.playing)
-    if playing and not st.session_state.get("neck_was_playing", False):
-        # The camera was (re)started: begin a fresh assessment and drop the old results.
-        st.session_state.pop("neck_result", None)
-        st.session_state.pop("neck_saved", None)
-    st.session_state["neck_was_playing"] = playing
-
-    st.write(t("Camera Status:"), t("Running") if playing else t("Not running"))
-    processor = ctx.video_processor
-
-    def neck_snapshot(p):
-        return {
-            "time": now_local().strftime("%Y-%m-%d %H:%M:%S"),
-            "Flexion": float(p.max_flexion),
-            "Extension": float(p.max_extension),
-            "Right_Rotation": float(p.max_right_rotation),
-            "Left_Rotation": float(p.max_left_rotation),
-            "Tilt_Right": float(p.max_tilt_right),
-            "Tilt_Left": float(p.max_tilt_left),
-            "movement": pd.DataFrame(p.movement_data),
-        }
-
-    if processor is None:
-        st.info(t("Waiting for the camera. Allow camera permission and press Start."))
-    else:
-        processor.swap_left_right = swap_lr
-        processor.swap_flex_ext = swap_fe
-
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            if st.button(t("Start Assessment"), disabled=processor.assessment_active):
-                if processor.is_calibrated:
-                    processor.start_assessment()
-                    st.session_state.pop("neck_result", None)
-                    st.session_state.pop("neck_saved", None)
-                    st.rerun()
-                else:
-                    st.warning(t("Still calibrating. Wait for 'Neutral position calibrated' below, then press Start again."))
-        with col_b:
-            if st.button(t("Stop Assessment"), disabled=not processor.assessment_active):
-                processor.stop_assessment()
-                st.session_state["neck_result"] = neck_snapshot(processor)
-                st.session_state["neck_saved"] = False
-                st.rerun()
-        with col_c:
-            if st.button(t("Recalibrate"), disabled=processor.assessment_active):
-                processor.reset_calibration()
-                st.rerun()
-
-        st.write(
-            t("Assessment status:"),
-            t("Active") if processor.assessment_active
-            else t("Completed") if processor.assessment_completed
-            else t("Not started"),
-        )
-
-        @st.fragment(run_every=1)
-        def live_results(p):
-            st.caption(t("Video frames received by the server: {n}", n=p.frames_received))
-            if p.error:
-                st.error(t("Face tracking problem: {e}", e=p.error))
-            elif p.frames_received == 0:
-                st.warning(t("The server has not received any video yet. Allow the camera in your browser and press START below the video."))
-            if not p.is_calibrated:
-                left = max(0, p.CALIBRATION_FRAMES - len(p.calibration_samples))
-                if p.face_visible:
-                    st.warning(t("Calibrating: about {left} more frames. Keep your head still.", left=left))
-                else:
-                    st.error(t("No face detected. Face the camera in good light, with your whole face visible."))
-                return
-            st.success(t("Neutral position calibrated. You can start the assessment."))
-            st.caption(
-                t(
-                    "Face detected: {face} | live: pitch {pitch}°, yaw {yaw}°, roll {roll}°",
-                    face=t("yes") if p.face_visible else t("NO"),
-                    pitch=f"{p.current_pitch:+.1f}", yaw=f"{p.current_yaw:+.1f}", roll=f"{p.current_roll:+.1f}",
-                )
+            ctx = webrtc_streamer(
+                key="neck_movement",
+                video_processor_factory=NeckMovementProcessor,
+                media_stream_constraints={
+                    "video": {"facingMode": "user", "width": {"ideal": 640}, "height": {"ideal": 480},
+                              "frameRate": {"ideal": 24}},
+                    "audio": False,
+                },
+                rtc_configuration=rtc_cfg,
+                async_processing=True,
+                video_html_attrs={
+                    "style": {"width": "100%", "transform": "scaleX(-1)"},  # selfie (mirrored) view
+                    "controls": False,
+                    "autoPlay": True,
+                    "muted": True,
+                    "playsInline": True,  # required by iPhone Safari, otherwise the camera video never shows
+                },
             )
-            if p.assessment_active:
-                # Keep a running copy, so the results survive even if the camera is closed.
-                st.session_state["neck_result"] = neck_snapshot(p)
-                st.subheader(t("Assessment in progress: maximum movement so far"))
-                c1, c2, c3 = st.columns(3)
-                c1.metric(t("Flexion"), f"{p.max_flexion:.1f}°")
-                c1.metric(t("Extension"), f"{p.max_extension:.1f}°")
-                c2.metric(t("Right rotation"), f"{p.max_right_rotation:.1f}°")
-                c2.metric(t("Left rotation"), f"{p.max_left_rotation:.1f}°")
-                c3.metric(t("Tilt right"), f"{p.max_tilt_right:.1f}°")
-                c3.metric(t("Tilt left"), f"{p.max_tilt_left:.1f}°")
 
-        live_results(processor)
+            playing = bool(ctx.state.playing)
+            if playing and not st.session_state.get("neck_was_playing", False):
+                # The camera was (re)started: begin a fresh assessment and drop the old results.
+                st.session_state.pop("neck_result", None)
+                st.session_state.pop("neck_saved", None)
+            st.session_state["neck_was_playing"] = playing
+
+            st.write(t("Camera Status:"), t("Running") if playing else t("Not running"))
+            processor = ctx.video_processor
+
+            def neck_snapshot(p):
+                return {
+                    "time": now_local().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Flexion": float(p.max_flexion),
+                    "Extension": float(p.max_extension),
+                    "Right_Rotation": float(p.max_right_rotation),
+                    "Left_Rotation": float(p.max_left_rotation),
+                    "Tilt_Right": float(p.max_tilt_right),
+                    "Tilt_Left": float(p.max_tilt_left),
+                    "movement": pd.DataFrame(p.movement_data),
+                }
+
+            if processor is None:
+                st.info(t("Waiting for the camera. Allow camera permission and press Start."))
+            else:
+                processor.swap_left_right = swap_lr
+                processor.swap_flex_ext = swap_fe
+
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    if st.button(t("Start Assessment"), disabled=processor.assessment_active):
+                        if processor.is_calibrated:
+                            processor.start_assessment()
+                            st.session_state.pop("neck_result", None)
+                            st.session_state.pop("neck_saved", None)
+                            st.rerun()
+                        else:
+                            st.warning(t("Still calibrating. Wait for 'Neutral position calibrated' below, then press Start again."))
+                with col_b:
+                    if st.button(t("Stop Assessment"), disabled=not processor.assessment_active):
+                        processor.stop_assessment()
+                        st.session_state["neck_result"] = neck_snapshot(processor)
+                        st.session_state["neck_saved"] = False
+                        st.rerun()
+                with col_c:
+                    if st.button(t("Recalibrate"), disabled=processor.assessment_active):
+                        processor.reset_calibration()
+                        st.rerun()
+
+                st.write(
+                    t("Assessment status:"),
+                    t("Active") if processor.assessment_active
+                    else t("Completed") if processor.assessment_completed
+                    else t("Not started"),
+                )
+
+                @st.fragment(run_every=1)
+                def live_results(p):
+                    st.caption(t("Video frames received by the server: {n}", n=p.frames_received))
+                    if p.error:
+                        st.error(t("Face tracking problem: {e}", e=p.error))
+                    elif p.frames_received == 0:
+                        st.warning(t("The server has not received any video yet. Allow the camera in your browser and press START below the video."))
+                    if not p.is_calibrated:
+                        left = max(0, p.CALIBRATION_FRAMES - len(p.calibration_samples))
+                        if p.face_visible:
+                            st.warning(t("Calibrating: about {left} more frames. Keep your head still.", left=left))
+                        else:
+                            st.error(t("No face detected. Face the camera in good light, with your whole face visible."))
+                        return
+                    st.success(t("Neutral position calibrated. You can start the assessment."))
+                    st.caption(
+                        t(
+                            "Face detected: {face} | live: pitch {pitch}°, yaw {yaw}°, roll {roll}°",
+                            face=t("yes") if p.face_visible else t("NO"),
+                            pitch=f"{p.current_pitch:+.1f}", yaw=f"{p.current_yaw:+.1f}", roll=f"{p.current_roll:+.1f}",
+                        )
+                    )
+                    if p.assessment_active:
+                        # Keep a running copy, so the results survive even if the camera is closed.
+                        st.session_state["neck_result"] = neck_snapshot(p)
+                        st.subheader(t("Assessment in progress: maximum movement so far"))
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric(t("Flexion"), f"{p.max_flexion:.1f}°")
+                        c1.metric(t("Extension"), f"{p.max_extension:.1f}°")
+                        c2.metric(t("Right rotation"), f"{p.max_right_rotation:.1f}°")
+                        c2.metric(t("Left rotation"), f"{p.max_left_rotation:.1f}°")
+                        c3.metric(t("Tilt right"), f"{p.max_tilt_right:.1f}°")
+                        c3.metric(t("Tilt left"), f"{p.max_tilt_left:.1f}°")
+
+                live_results(processor)
 
     # ---- results of the last assessment: stay on screen until the camera is started again
     show_neck_results(patient_id, assessment_running=(processor is not None and processor.assessment_active))
