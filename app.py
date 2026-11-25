@@ -46,7 +46,7 @@ try:
 except Exception:
     LOCAL_TZ = None
 
-APP_VERSION = "2026-11-30 dark mode + AI errors"
+APP_VERSION = "2026-11-26 free AI + dark mode"
 
 # Thyrocare app icon (PNG, base64): used for the browser tab and the phone home-screen shortcut
 ICON_192_B64 = "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"
@@ -811,16 +811,14 @@ AR.update({
 })
 
 
+AR.update({
+    'Free Google Gemini service: Google may use photos sent through the free plan to improve its products. Only agree if you are comfortable with that.': 'خدمة Google Gemini المجانية: قد تستخدم Google الصور المرسلة عبر الخطة المجانية لتحسين منتجاتها. وافق فقط إذا كنت مرتاحًا لذلك.',
+})
+
+
 # =========================================================
 # CONFIG
 # =========================================================
-try:
-    for _opt, _val in {"theme.base": "light", "theme.primaryColor": "#167D9A", "theme.backgroundColor": "#F4F7FB",
-                       "theme.secondaryBackgroundColor": "#FFFFFF", "theme.textColor": "#263445"}.items():
-        st._config.set_option(_opt, _val)
-except Exception:
-    pass
-
 st.set_page_config(
     page_title="Thyrocare",
     page_icon=Image.open(io.BytesIO(base64.b64decode(ICON_192_B64))),
@@ -2949,11 +2947,71 @@ def anthropic_cfg():
     return None
 
 
+def gemini_cfg():
+    """Free option: a Google Gemini key from Google AI Studio ([gemini] api_key in the Secrets)."""
+    try:
+        c = dict(st.secrets["gemini"])
+        key = "".join(str(c.get("api_key") or "").split()).strip("\"'")
+        if key:
+            return key, str(c.get("model") or "gemini-2.5-flash").strip()
+    except Exception:
+        pass
+    return None
+
+
+def ai_provider():
+    return "gemini" if gemini_cfg() else ("anthropic" if anthropic_cfg() else None)
+
+
 def ai_available():
-    return anthropic_cfg() is not None
+    return ai_provider() is not None
+
+
+def ai_privacy_note():
+    """A short privacy reminder shown next to the 'I agree' tick box."""
+    if ai_provider() == "gemini":
+        return t("Free Google Gemini service: Google may use photos sent through the free plan to improve its products. Only agree if you are comfortable with that.")
+    return ""
+
+
+def _gemini_message(content, system, max_tokens):
+    key, model = gemini_cfg()
+    parts = []
+    for block in content:
+        if block.get("type") == "image":
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": block["source"]["data"]}})
+        else:
+            parts.append({"text": block.get("text", "")})
+    r = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={"x-goog-api-key": key, "content-type": "application/json"},
+        json={"systemInstruction": {"parts": [{"text": system}]},
+              "contents": [{"role": "user", "parts": parts}],
+              "generationConfig": {"maxOutputTokens": max(max_tokens, 2048), "temperature": 0.2,
+                                   "responseMimeType": "application/json"}},
+        timeout=90,
+    )
+    if not r.ok:
+        try:
+            detail = r.json().get("error", {}).get("message", "")
+        except Exception:
+            detail = ""
+        hints = {400: "the Gemini key or the request was not accepted. Check the key in the app Secrets.",
+                 403: "this Gemini key is not allowed to use that model (or it is not available in your country).",
+                 404: "the model name was not found. Remove 'model' from the Secrets or use a current Gemini model name.",
+                 429: "the free limit was reached. Wait a minute and try again."}
+        raise RuntimeError(f"{r.status_code}: {hints.get(r.status_code, '')} {detail}".strip())
+    data = r.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        reason = (data.get("promptFeedback") or {}).get("blockReason", "no answer")
+        raise RuntimeError(f"the AI returned no answer ({reason}). Try a clearer photo.")
+    return "".join(p.get("text", "") for p in (candidates[0].get("content") or {}).get("parts", []))
 
 
 def _ai_message(content, system, max_tokens=900):
+    if ai_provider() == "gemini":
+        return _gemini_message(content, system, max_tokens)
     cfg = anthropic_cfg()
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
@@ -3502,6 +3560,8 @@ def page_meds(pid):
                 st.error(t("This file could not be read as a photo."))
         if b64 and ai_available():
             consent_ai = st.checkbox(t("I agree to send this photo to the AI service so it can be read."), key="rx_consent")
+            if ai_privacy_note():
+                st.caption(ai_privacy_note())
             if st.button(t("Read the prescription with AI"), disabled=not consent_ai):
                 try:
                     with st.spinner(t("Reading...")):
@@ -3693,6 +3753,8 @@ def page_scar(pid):
             fever = st.checkbox(t("I have a fever (38 °C / 100.4 °F or higher)"), key="sc_fever")
             notes = st.text_input(t("Notes (optional)"), key="sc_notes")
             consent_ai = st.checkbox(t("I agree to send this photo to the AI service for a first look."), key="sc_consent") if ai_available() else False
+            if ai_available() and ai_privacy_note():
+                st.caption(ai_privacy_note())
             go = st.form_submit_button(t("Save this check"))
         if go:
             if not b64:
@@ -4142,19 +4204,19 @@ NECK_COMPONENT_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { margin: 0; padding: 0 2px; font-family: -apple-system, "Segoe UI", Roboto, Cairo, sans-serif; color: #263445; background: transparent; }
+  body { margin: 0; padding: 0 2px; font-family: -apple-system, "Segoe UI", Roboto, Cairo, sans-serif; color: var(--text, #263445); background: transparent; }
   #wrap { position: relative; width: 100%; max-width: 360px; margin: 0 auto; }
   video { width: 100%; display: block; transform: scaleX(-1); border-radius: 12px; background: #0d1b2a; min-height: 120px; }
-  #status { padding: 10px 12px; border-radius: 10px; background: #E8F1F8; margin: 8px 0; font-size: 15px; line-height: 1.4; }
-  #status.err { background: #FDE8E8; color: #8a1c1c; } #status.ok { background: #E3F5EA; color: #1E6B3A; }
+  #status { padding: 10px 12px; border-radius: 10px; background: var(--box, #E8F1F8); margin: 8px 0; font-size: 15px; line-height: 1.4; }
+  #status.err { background: rgba(220,53,69,.18); border-left: 4px solid #dc3545; } #status.ok { background: rgba(40,167,69,.18); border-left: 4px solid #28a745; }
   .row { display: flex; gap: 8px; margin: 8px 0; }
   button { flex: 1; padding: 13px 6px; border: 0; border-radius: 10px; background: #167D9A; color: #fff; font-size: 16px; font-weight: 600; }
   button:disabled { opacity: .4; }
   button.secondary { background: #5B6B7C; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
-  .cell { background: #fff; border: 1px solid #DCE5EF; border-radius: 10px; padding: 8px 4px; text-align: center; }
-  .cell b { display: block; font-size: 20px; color: #153A5B; } .cell span { font-size: 12px; color: #5B6B7C; }
-  #live { font-size: 13px; color: #5B6B7C; margin: 4px 0; direction: ltr; text-align: center; }
+  .cell { background: var(--box, #fff); border: 1px solid rgba(128,128,128,.35); border-radius: 10px; padding: 8px 4px; text-align: center; }
+  .cell b { display: block; font-size: 20px; color: var(--text, #153A5B); } .cell span { font-size: 12px; opacity: .75; }
+  #live { font-size: 13px; opacity: .75; margin: 4px 0; direction: ltr; text-align: center; }
 </style>
 </head>
 <body>
@@ -4376,6 +4438,9 @@ window.addEventListener("message", ev => {
     if (a.labels) L = Object.assign(L, a.labels);
     swapLR = !!a.swap_lr; swapFE = !!a.swap_fe;
     document.body.dir = a.rtl ? "rtl" : "ltr";
+    const th = d.theme || {};
+    if (th.textColor) document.documentElement.style.setProperty("--text", th.textColor);
+    if (th.secondaryBackgroundColor) document.documentElement.style.setProperty("--box", th.secondaryBackgroundColor);
     if (a.saved_id && saveId && a.saved_id === saveId && !saved) { saved = true; buttons(); setStatus(L.saved, "ok"); }
     if (a.save_error && saveId && a.save_error_id === saveId) { saveId = null; buttons(); setStatus(fmt(L.saveFail, { e: a.save_error }), "err"); }
     applyLabels(); if (state === "idle") setStatus(L.startCam + " ↓");
@@ -4469,57 +4534,26 @@ def handle_neck_component_value(val, pid):
 st.markdown(
     """
     <style>
-    .stApp { background-color: #F4F7FB; color: #263445; }
-    .stApp p, .stApp label, .stApp h1, .stApp h2, .stApp h3,
-    .stApp span, .stApp div[data-testid="stMetricValue"] { color: #263445; }
-    h1, h2, h3 { color: #153A5B !important; }
+    /* Brand accents only. Everything else follows the theme, so light AND dark mode both stay readable.
+       (Choose the theme in the menu: the three dots, then Settings, then Theme.) */
     [data-testid="stSidebar"] { background-color: #153A5B; }
-    [data-testid="stSidebar"] p, [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] span, [data-testid="stSidebar"] h2 { color: white; }
-    [data-testid="stMetric"] {
-        background-color: white; padding: 16px; border-radius: 12px;
-        border: 1px solid #DCE5EF;
-    }
-    .stButton button { background-color: #167D9A; color: white !important;
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] { color: #FFFFFF; }
+    [data-testid="stSidebar"] [data-testid="stAlert"] p, [data-testid="stSidebar"] [data-testid="stAlert"] span,
+    [data-testid="stSidebar"] [data-testid="stAlert"] label { color: inherit !important; }
+    [data-testid="stSidebar"] [data-testid="stExpander"], [data-testid="stSidebar"] details {
+        background-color: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); border-radius: 10px; }
+    [data-testid="stMetric"] { background-color: rgba(128,128,128,0.08); padding: 16px; border-radius: 12px;
+        border: 1px solid rgba(128,128,128,0.35); }
+    .stButton button, .stDownloadButton button, [data-testid="stDownloadButton"] button,
+    [data-testid="stFormSubmitButton"] button { background-color: #167D9A; color: #FFFFFF !important;
         border-radius: 8px; border: none; }
-    .stApp .stDownloadButton button, .stApp [data-testid="stDownloadButton"] button {
-        background-color: #167D9A; color: white !important; border-radius: 8px; border: none; }
-    .stApp .stButton button p, .stApp .stButton button span,
-    .stApp .stDownloadButton button p, .stApp .stDownloadButton button span,
-    .stApp [data-testid="stDownloadButton"] button p,
-    .stApp [data-testid="stDownloadButton"] button span { color: white !important; }
+    .stButton button:hover, .stDownloadButton button:hover, [data-testid="stFormSubmitButton"] button:hover {
+        background-color: #1A93B5; }
+    .stButton button p, .stButton button span, .stDownloadButton button p, .stDownloadButton button span,
+    [data-testid="stDownloadButton"] button p, [data-testid="stFormSubmitButton"] button p { color: #FFFFFF !important; }
     [data-testid="stAlert"] { border-radius: 10px; }
-
-    /* ---- the app is designed as a light theme: keep boxes light even when the phone/PC is in dark mode ---- */
-    :root { color-scheme: light; }
-    .stApp input, .stApp textarea, .stApp [data-baseweb="input"], .stApp [data-baseweb="base-input"],
-    .stApp [data-baseweb="textarea"] { background-color: #FFFFFF !important; color: #263445 !important;
-        -webkit-text-fill-color: #263445; }
-    .stApp [data-baseweb="select"] > div { background-color: #FFFFFF !important; color: #263445 !important; }
-    [data-baseweb="popover"] [role="listbox"], [data-baseweb="menu"] { background-color: #FFFFFF !important; }
-    [data-baseweb="popover"] li, [data-baseweb="popover"] li *, [data-baseweb="menu"] li, [data-baseweb="menu"] li * {
-        color: #263445 !important; }
-    .stApp [data-testid="stExpander"], .stApp details { background-color: #FFFFFF !important;
-        border: 1px solid #DCE5EF !important; border-radius: 10px; }
-    .stApp [data-testid="stExpander"] summary, .stApp [data-testid="stExpander"] summary *, .stApp details summary,
-    .stApp details summary * { color: #153A5B !important; }
-    [data-testid="stExpanderDetails"] p, [data-testid="stExpanderDetails"] label, [data-testid="stExpanderDetails"] span,
-    [data-testid="stExpanderDetails"] li, details p, details label { color: #263445 !important; }
-    .stApp [data-baseweb="tab"], .stApp [data-baseweb="tab"] * { color: #263445 !important; }
-    .stApp [data-testid="stFileUploaderDropzone"] { background-color: #FFFFFF !important; border: 1px dashed #9DB4C8; }
-    .stApp [data-testid="stFileUploaderDropzone"] *:not(button):not(button *) { color: #263445 !important; }
-    .stApp [data-testid="stAlert"], .stApp [data-testid="stAlert"] > div, .stApp [data-baseweb="notification"] {
-        background-color: #E8F1F8 !important; }
-    .stApp [data-testid="stAlert"] * { color: #153A5B !important; }
-    .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]), .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) > div {
-        background-color: #FFF4D6 !important; }
-    .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) * { color: #7A5200 !important; }
-    .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentError"]), .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentError"]) > div {
-        background-color: #FDE8E8 !important; }
-    .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentError"]) * { color: #8A1C1C !important; }
-    .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]), .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) > div {
-        background-color: #E3F5EA !important; }
-    .stApp [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) * { color: #1E6B3A !important; }
     </style>
     """,
     unsafe_allow_html=True,
